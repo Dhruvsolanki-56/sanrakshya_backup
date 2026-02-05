@@ -1,0 +1,55 @@
+# Top-level
+.DS_Store
+Thumbs.db
+*.log
+*.tmp
+*.swp
+*.swo
+*.orig
+!.gitignore
+
+# IDE
+.vscode/
+.idea/
+*.code-workspace
+
+# Python / Backend
+backend/__pycache__/
+backend/**/*.py[cod]
+backend/.pytest_cache/
+backend/.mypy_cache/
+backend/.ruff_cache/
+backend/.coverage
+backend/coverage.xml
+backend/htmlcov/
+backend/.venv/
+backend/venv/
+backend/env/
+backend/.env
+backend/*.sqlite3
+backend/*.db
+
+# Alembic migrations - ignore migration versions
+backend/alembic/versions/
+
+# Node / Mobile
+mobile/node_modules/
+mobile/.expo/
+mobile/.expo-shared/
+mobile/.env
+mobile/dist/
+mobile/build/
+mobile/.cache/
+mobile/npm-debug.log*
+mobile/yarn-debug.log*
+mobile/yarn-error.log*
+mobile/packager-info.json
+mobile/expo-packager-cache-* 
+mobile/metro-cache
+
+# React Native platform folders (if generated locally)
+mobile/ios/
+mobile/android/
+
+# OS specific
+mobile/*.iml

@@ -1,0 +1,76 @@
+PS C:\sanrakshya\backend> ./start.bat
+🚀 FastAPI running at: http://10.194.16.63:8000
+
+
+UPDATE TO MOBILE CONFIG URL AS PER GIVEN FROM YOUR CONSOLE.
+PS C:\sanrakshya\mobile> $env:REACT_NATIVE_PACKAGER_HOSTNAME="10.194.16.63"; npm start
+
+
+
+
+for dB setup 
+------------------------------------------------------------------
+Got it! Since your backup is a **pgAdmin custom-format dump**, here’s the correct way to restore it on another machine:
+
+---
+
+### **Step 1: Install PostgreSQL**
+
+Make sure PostgreSQL is installed on the target machine. Also, pgAdmin is optional but useful for GUI restore.
+
+---
+
+### **Step 2: Copy the backup file**
+
+Move your `sanrakshya.sql` file to the other machine.
+
+---
+
+### **Step 3: Restore using `pg_restore` (CLI)**
+
+1. Open a terminal (or Command Prompt on Windows).
+2. Create an empty database to restore into:
+
+```bash
+createdb sanrakshya
+```
+
+3. Restore the backup:
+
+```bash
+pg_restore -d sanrakshya -U your_pg_user -h localhost /path/to/sanrakshya.sql
+```
+
+* `-d sanrakshya` → the database to restore into
+* `-U your_pg_user` → your PostgreSQL username
+* `-h localhost` → host (if local)
+
+> You might be prompted for your PostgreSQL password.
+
+---
+
+### **Step 4: Restore using pgAdmin (GUI)**
+
+1. Open **pgAdmin**.
+2. Right-click **Databases → Create → Database**, name it `sanrakshya`.
+3. Right-click the new database → **Restore**.
+4. In **Format**, choose **Custom or Tar**.
+5. Browse to your `sanrakshya.sql` file and click **Restore**.
+
+---
+
+### ✅ Notes:
+
+* Since your backup is **custom-format**, **`psql` cannot restore it directly**; it must use `pg_restore` or pgAdmin.
+* Make sure the PostgreSQL versions on both machines are compatible (e.g., pgAdmin 18 backup → PostgreSQL 18).
+
+---
+
+I can also give you a **one-line command that restores it directly to a new database** if you want to just copy it and run without creating the DB manually.
+
+Do you want me to do that?
+
+------------------------------------------------------------------
+
+
+

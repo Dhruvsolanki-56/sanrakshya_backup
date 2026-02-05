@@ -1,0 +1,9 @@
+alembic revision --autogenerate -m "Add new table"
+alembic upgrade head
+
+
+DROP SCHEMA public CASCADE;
+CREATE SCHEMA public;
+
+.venv/scripts/activate
+ $env:REACT_NATIVE_PACKAGER_HOSTNAME="10.220.236.63"; npm start 

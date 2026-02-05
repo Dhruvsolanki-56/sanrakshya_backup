@@ -1,0 +1,76 @@
+// This file simulates a doctor's complete patient roster.
+
+export const allPatients = [
+  {
+    id: '1',
+    name: 'Emma Johnson',
+    age: 3,
+    avatar: 'https://randomuser.me/api/portraits/women/32.jpg',
+    lastVisit: '2024-10-06',
+    status: 'Active',
+    flags: 0,
+  },
+  {
+    id: '2',
+    name: 'Alex Chen',
+    age: 6,
+    avatar: 'https://randomuser.me/api/portraits/men/33.jpg',
+    lastVisit: '2024-09-15',
+    status: 'Active',
+    flags: 0,
+  },
+  {
+    id: '3',
+    name: 'Sophie Williams',
+    age: 1,
+    avatar: 'https://randomuser.me/api/portraits/women/34.jpg',
+    lastVisit: '2024-10-01',
+    status: 'At Risk',
+    flags: 2, // Represents the number of clinical flags
+  },
+  {
+    id: '4',
+    name: 'Liam Brown',
+    age: 5,
+    avatar: 'https://randomuser.me/api/portraits/men/35.jpg',
+    lastVisit: '2024-08-20',
+    status: 'Active',
+    flags: 0,
+  },
+  {
+    id: '5',
+    name: 'Olivia Garcia',
+    age: 2,
+    avatar: 'https://randomuser.me/api/portraits/women/36.jpg',
+    lastVisit: '2024-09-30',
+    status: 'Active',
+    flags: 0,
+  },
+  {
+    id: '6',
+    name: 'Noah Martinez',
+    age: 4,
+    avatar: 'https://randomuser.me/api/portraits/men/37.jpg',
+    lastVisit: '2024-07-11',
+    status: 'Inactive',
+    flags: 0,
+  },
+  {
+    id: '7',
+    name: 'Isabella Rodriguez',
+    age: 7,
+    avatar: 'https://randomuser.me/api/portraits/women/38.jpg',
+    lastVisit: '2024-09-05',
+    status: 'Active',
+    flags: 0,
+  },
+  {
+    id: '8',
+    name: 'James Wilson',
+    age: 0.5, // 6 months old
+    avatar: 'https://randomuser.me/api/portraits/men/39.jpg',
+    lastVisit: '2024-10-02',
+    status: 'Active',
+    flags: 1,
+  },
+];

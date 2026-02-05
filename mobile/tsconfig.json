@@ -1,0 +1,21 @@
+{
+  "extends": "expo/tsconfig.base",
+  "compilerOptions": {
+    "target": "es2019",
+    "module": "esnext",
+    "jsx": "react-native",
+
+    "allowJs": true,
+    "checkJs": false,
+    "skipLibCheck": true,
+    "noEmit": true,
+
+    "types": []
+  },
+  "exclude": [
+    "node_modules",
+    "**/node_modules/*",
+    "android",
+    "ios"
+  ]
+}
