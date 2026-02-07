@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useMemo, useCallback, useRef } from 'react';
+import React, { useState, useEffect, useMemo, useRef } from 'react';
 import {
 	View,
 	Text,
@@ -6,102 +6,65 @@ import {
 	ScrollView,
 	Dimensions,
 	TouchableOpacity,
-	TouchableWithoutFeedback,
 	Image,
-	Platform,
-	ActivityIndicator,
 	Modal,
+	ActivityIndicator,
 	Animated,
+	Platform,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { LineChart } from 'react-native-chart-kit';
-import { Ionicons } from '@expo/vector-icons';
+import { Ionicons, MaterialCommunityIcons } from '@expo/vector-icons';
 import { LinearGradient } from 'expo-linear-gradient';
-import ScreenHeader from '../../components/ScreenHeader';
-import LoadingState from '../../components/LoadingState';
-import ErrorState from '../../components/ErrorState';
-import { predictionsService } from '../../services/predictionsService';
 import { useSelectedChild } from '../../contexts/SelectedChildContext';
+import { predictionsService } from '../../services/predictionsService';
 
 const { width } = Dimensions.get('window');
 
-const GrowthChartScreen = ({ route, navigation }) => {
+const GrowthChartScreen = ({ navigation }) => {
 	const {
 		children,
 		selectedChild,
 		selectedChildId,
 		loadingChildren,
 		switchingChild,
-		error: childrenError,
 		selectChild,
 	} = useSelectedChild();
 
-	const currentChild = selectedChild;
-	const currentChildIndex = useMemo(
-		() => children.findIndex(c => String(c.id) === String(selectedChildId)),
-		[children, selectedChildId]
-	);
-	const [activeChart, setActiveChart] = useState('percentile'); // 'weight' | 'height' | 'bmi' | 'percentile'
+	const [activeChart, setActiveChart] = useState('percentile');
 	const [trendData, setTrendData] = useState([]);
 	const [loadingTrend, setLoadingTrend] = useState(false);
 	const [trendError, setTrendError] = useState('');
 	const [showChildSelector, setShowChildSelector] = useState(false);
-	const [showChildOverlay, setShowChildOverlay] = useState(false);
-	const sheetAnim = useRef(new Animated.Value(0)).current;
 
-	const chartConfig = {
-		backgroundColor: '#ffffff',
-		backgroundGradientFrom: '#f2f3ff',
-		backgroundGradientTo: '#ffffff',
-		decimalPlaces: 1,
-		color: (opacity = 1) => `rgba(0, 0, 0, ${opacity})`,
-		labelColor: (opacity = 1) => `rgba(0, 0, 0, ${opacity})`,
-		style: {
-			borderRadius: 16,
-		},
-		propsForDots: {
-			r: '5',
-			strokeWidth: '2',
-			stroke: '#667eea',
-		},
-		propsForBackgroundLines: {
-			stroke: 'rgba(255,255,255,0.4)',
-		},
-	};
+	// Core Animations
+	const fadeAnim = useRef(new Animated.Value(0)).current;
+	const slideAnim = useRef(new Animated.Value(50)).current;
 
-	const formatAgeText = (dobRaw) => {
-		if (!dobRaw) return '';
-		const dob = new Date(dobRaw);
-		if (Number.isNaN(dob.getTime())) return '';
-		const now = new Date();
-		let years = now.getFullYear() - dob.getFullYear();
-		let months = now.getMonth() - dob.getMonth();
-		const dayDiff = now.getDate() - dob.getDate();
-		if (dayDiff < 0) months -= 1;
-		if (months < 0) { years -= 1; months += 12; }
-		if (years < 0) years = 0;
-		if (months < 0) months = 0;
-		return `${years} years ${months} ${months === 1 ? 'month' : 'months'}`;
-	};
-
-	const getAgeTextForChild = (child) => {
-		if (!child) return '';
-		const yearsFromApi = typeof child.ageYears === 'number' ? child.ageYears : null;
-		const monthsFromApi = typeof child.ageMonths === 'number' ? child.ageMonths : null;
-		if (yearsFromApi != null || monthsFromApi != null) {
-			const years = yearsFromApi != null ? yearsFromApi : 0;
-			const months = monthsFromApi != null ? monthsFromApi : 0;
-			return `${years} ${years === 1 ? 'year' : 'years'} ${months} ${months === 1 ? 'month' : 'months'}`;
-		}
-		return formatAgeText(child.dobRaw);
-	};
+	// Specific animation for Chart switching
+	const chartOpacity = useRef(new Animated.Value(1)).current;
 
 	useEffect(() => {
+		Animated.parallel([
+			Animated.timing(fadeAnim, { toValue: 1, duration: 800, useNativeDriver: true }),
+			Animated.spring(slideAnim, { toValue: 0, friction: 8, useNativeDriver: true }),
+		]).start();
+	}, []);
+
+	// Trigger chart animation on activeChart change
+	useEffect(() => {
+		chartOpacity.setValue(0);
+		Animated.timing(chartOpacity, {
+			toValue: 1,
+			duration: 500,
+			useNativeDriver: true,
+		}).start();
+	}, [activeChart]);
+
+	// Data Loading
+	useEffect(() => {
 		const loadTrend = async () => {
-			if (!selectedChildId) {
-				setTrendData([]);
-				return;
-			}
+			if (!selectedChildId) { setTrendData([]); return; }
 			if (loadingChildren || switchingChild) return;
 
 			try {
@@ -109,647 +72,458 @@ const GrowthChartScreen = ({ route, navigation }) => {
 				setTrendError('');
 				const data = await predictionsService.getTrendForChild(selectedChildId);
 				const list = Array.isArray(data) ? data : data?.trend || [];
-				const sorted = [...list].sort((a, b) => {
-					const da = new Date(a.created_at || a.date);
-					const db = new Date(b.created_at || b.date);
-					return da - db;
-				});
+				const sorted = [...list].sort((a, b) => new Date(a.created_at || a.date) - new Date(b.created_at || b.date));
 				setTrendData(sorted);
 			} catch (err) {
 				setTrendData([]);
-				setTrendError('Unable to load growth trend. Please try again.');
+				setTrendError('Unable to load growth data.');
 			} finally {
 				setLoadingTrend(false);
 			}
 		};
-
 		loadTrend();
 	}, [selectedChildId, loadingChildren, switchingChild]);
 
-	const openChildModal = () => {
-		if (loadingChildren || !children.length) return;
-		setShowChildSelector(true);
-		setShowChildOverlay(false);
-		sheetAnim.setValue(0);
-		Animated.timing(sheetAnim, {
-			toValue: 1,
-			duration: 250,
-			useNativeDriver: true,
-		}).start(({ finished }) => {
-			if (finished) {
-				setShowChildOverlay(true);
-			}
-		});
+	// Helpers
+	const getTheme = () => {
+		switch (activeChart) {
+			case 'weight': return { primary: '#4F46E5', secondary: '#818CF8', label: 'Weight', suffix: 'kg', icon: 'scale-bathroom', dotIcon: 'balloon' };
+			case 'height': return { primary: '#059669', secondary: '#34D399', label: 'Height', suffix: 'cm', icon: 'human-male-height', dotIcon: 'pine-tree' };
+			case 'bmi': return { primary: '#7C3AED', secondary: '#A78BFA', label: 'BMI', suffix: '', icon: 'calculator', dotIcon: 'heart' };
+			default: return { primary: '#F59E0B', secondary: '#FCD34D', label: 'Percentile', suffix: '%', icon: 'chart-line', dotIcon: 'star' };
+		}
 	};
 
-	const closeChildModal = () => {
-		setShowChildOverlay(false);
-		Animated.timing(sheetAnim, {
-			toValue: 0,
-			duration: 250,
-			useNativeDriver: true,
-		}).start(({ finished }) => {
-			if (finished) {
-				setShowChildSelector(false);
-			}
-		});
-	};
+	const theme = getTheme();
 
-	const renderTrendBanner = () => {
-		if (loadingTrend) {
-			return (
-				<View style={styles.trendBannerWrapper}>
-					<View style={styles.trendBannerCard}>
-						<View style={styles.trendBannerIconCircle}>
-							<ActivityIndicator color="#667eea" />
-						</View>
-						<View style={styles.trendBannerText}>
-							<Text style={styles.trendBannerTitle}>Loading growth data</Text>
-						</View>
-					</View>
-				</View>
-			);
-		}
-
-		if (trendError) {
-			return (
-				<View style={styles.trendBannerWrapper}>
-					<View style={styles.trendBannerCard}>
-						<View style={styles.trendBannerIconCircle}>
-							<Ionicons name="warning-outline" size={20} color="#e74c3c" />
-						</View>
-						<View style={styles.trendBannerText}>
-							<Text style={styles.trendBannerTitle}>Problem loading growth</Text>
-						</View>
-					</View>
-				</View>
-			);
-		}
-
-		if (!trendData.length) {
-			return (
-				<View style={styles.trendBannerWrapper}>
-					<View style={styles.trendBannerCard}>
-						<View style={styles.trendBannerIconCircle}>
-							<Ionicons name="analytics-outline" size={20} color="#667eea" />
-						</View>
-						<View style={styles.trendBannerText}>
-							<Text style={styles.trendBannerTitle}>No growth data yet</Text>
-						</View>
-					</View>
-				</View>
-			);
-		}
-
-		return null;
-	};
+	// Get Latest Value for Big Stat
+	const latestValue = useMemo(() => {
+		if (!trendData.length) return '--';
+		const latest = trendData[trendData.length - 1];
+		if (activeChart === 'weight') return latest.weight_kg;
+		if (activeChart === 'height') return latest.height_cm;
+		if (activeChart === 'bmi') return latest.bmi;
+		return latest.growth_percentile;
+	}, [trendData, activeChart]);
 
 	const renderChart = () => {
-		let legendLabel = '';
-		let ySuffix = '';
-		let lineColorRGB = '52, 152, 219'; // default weight color
-		const points = trendData
-			.map((point) => {
-				const d = new Date(point.created_at || point.date);
-				if (Number.isNaN(d.getTime())) return null;
-				const label = d.toLocaleDateString(undefined, { day: 'numeric', month: 'short' });
+		if (loadingTrend) return <ActivityIndicator size="large" color={theme.primary} style={{ marginTop: 40 }} />;
+		if (trendError || !trendData.length) return (
+			<View style={styles.emptyState}>
+				<Text style={styles.emptyText}>{trendError || "No growth data recorded yet."}</Text>
+			</View>
+		);
 
-				let rawValue = null;
-				switch (activeChart) {
-					case 'height':
-						legendLabel = 'Height (cm)';
-						ySuffix = ' cm';
-						lineColorRGB = '230, 126, 34'; // orange
-						rawValue = point.height_cm;
-						break;
-					case 'bmi':
-						legendLabel = 'BMI';
-						ySuffix = '';
-						lineColorRGB = '155, 89, 182'; // purple
-						rawValue = point.bmi;
-						break;
-					case 'percentile':
-						legendLabel = 'Growth Percentile';
-						ySuffix = '%';
-						lineColorRGB = '46, 204, 113'; // green
-						rawValue = point.growth_percentile;
-						break;
-					case 'weight':
-					default:
-						legendLabel = 'Weight (kg)';
-						ySuffix = ' kg';
-						lineColorRGB = '52, 152, 219'; // blue
-						rawValue = point.weight_kg;
-						break;
-				}
+		const points = trendData.map(p => {
+			const d = new Date(p.created_at || p.date);
+			const label = d.toLocaleDateString(undefined, { day: 'numeric', month: 'short' });
+			let val = 0;
+			if (activeChart === 'weight') val = p.weight_kg;
+			if (activeChart === 'height') val = p.height_cm;
+			if (activeChart === 'bmi') val = p.bmi;
+			if (activeChart === 'percentile') val = p.growth_percentile;
+			return { label, value: Number(val) || 0 };
+		}).filter(p => !isNaN(p.value));
 
-				const value = Number(rawValue);
-				if (rawValue == null || Number.isNaN(value)) return null;
-				return { label, value };
-			})
-			.filter(Boolean);
-
-		if (!points.length) {
-			return null;
-		}
-
-		const rawLabels = points.map((p) => p.label);
-		const safeValues = points.map((p) => p.value);
-		let labels = rawLabels;
-
-		// If there are many points, only show some labels to keep the x-axis readable
-		if (rawLabels.length > 8) {
-			const step = Math.ceil(rawLabels.length / 6); // aim for ~6 visible labels
-			labels = rawLabels.map((label, index) => (index % step === 0 ? label : ''));
-		}
-
-		const data = {
-			labels,
-			datasets: [
-				{
-					data: safeValues,
-					color: (opacity = 1) => `rgba(${lineColorRGB}, ${opacity})`,
-					strokeWidth: 2,
-				},
-			],
-			legend: [legendLabel],
-		};
-
-		// Give each point some horizontal space; allow horizontal scroll when there is a lot of data
-		const minPerPoint = 40; // px per data point
-		const chartWidth = Math.max(width - 80, Math.max(200, points.length * minPerPoint));
+		// Decimate labels
+		const labels = points.map(p => p.label);
+		const visibleLabels = labels.map((l, i) => (i % Math.max(1, Math.ceil(labels.length / 5)) === 0 ? l : ''));
 
 		return (
-			<ScrollView
-				horizontal
-				showsHorizontalScrollIndicator={false}
-				contentContainerStyle={{ paddingRight: 8 }}
-			>
+			<Animated.View style={{ opacity: chartOpacity }}>
 				<LineChart
-					data={data}
-					width={chartWidth}
-					height={250}
-					yAxisSuffix={ySuffix}
-					chartConfig={chartConfig}
-					fromZero
-					segments={4}
+					data={{ labels: visibleLabels, datasets: [{ data: points.map(p => p.value) }] }}
+					width={width - 80} // Card Width with padding
+					height={220}
+					yAxisSuffix={theme.suffix}
+					chartConfig={{
+						backgroundColor: '#FFF',
+						backgroundGradientFrom: '#FFF',
+						backgroundGradientTo: '#FFF',
+						decimalPlaces: 1,
+						color: (opacity = 1) => theme.primary,
+						labelColor: (opacity = 1) => `rgba(55, 65, 81, ${opacity})`,
+						propsForDots: { r: "5", strokeWidth: "2", stroke: theme.secondary },
+						propsForBackgroundLines: { strokeDasharray: "", stroke: "#F3F4F6" }
+					}}
 					bezier
-					style={styles.chart}
+					style={{ marginVertical: 8, borderRadius: 16 }}
+					withInnerLines={true}
+					withOuterLines={false}
+					renderDotContent={({ x, y, index }) => (
+						<View key={index} style={{ position: 'absolute', top: y - 12, left: x - 12 }}>
+							<MaterialCommunityIcons name={theme.dotIcon} size={24} color={theme.primary} />
+						</View>
+					)}
 				/>
-			</ScrollView>
+			</Animated.View>
 		);
 	};
 
 	return (
 		<SafeAreaView style={styles.container}>
-			<ScreenHeader
-				title="Growth Charts"
-				onBackPress={() => navigation.goBack()}
-			/>
+			{/* FIXED BACKGROUND DECORATION */}
+			<View style={styles.bgDecorations} pointerEvents="none">
+				<MaterialCommunityIcons name="ruler" size={350} color="rgba(0,0,0,0.06)" style={styles.bgRuler} />
+				<MaterialCommunityIcons name="white-balance-sunny" size={120} color="rgba(251, 191, 36, 0.15)" style={styles.bgSun} />
+				<MaterialCommunityIcons name="foot-print" size={80} color="rgba(59, 130, 246, 0.08)" style={styles.bgFoot1} />
+				<MaterialCommunityIcons name="foot-print" size={60} color="rgba(16, 185, 129, 0.08)" style={styles.bgFoot2} />
+				<MaterialCommunityIcons name="duck" size={70} color="rgba(245, 158, 11, 0.1)" style={styles.bgDuck} />
+				<MaterialCommunityIcons name="balloon" size={90} color="rgba(239, 68, 68, 0.08)" style={styles.bgBalloon} />
+				<MaterialCommunityIcons name="star-four-points" size={50} color="rgba(255,255,255, 0.5)" style={styles.bgStar1} />
+			</View>
 
-			<ScrollView showsVerticalScrollIndicator={false}>
-				{/* Child Selector */}
-				<View style={styles.sectionWrapper}>
-					<Text style={styles.sectionTitle}>Child</Text>
-					{loadingChildren ? (
-						<LoadingState
-							message="Loading child details..."
-							size="small"
-							style={styles.childLoadingBox}
-						/>
+			{/* HEADER */}
+			<View style={styles.header}>
+				<TouchableOpacity onPress={() => navigation.goBack()} style={styles.backBtn}>
+					<Ionicons name="arrow-back" size={24} color="#1F2937" />
+				</TouchableOpacity>
+				<Text style={styles.headerTitle}>Growth Chart</Text>
+				<TouchableOpacity style={styles.childBtn} onPress={() => setShowChildSelector(true)}>
+					{selectedChild?.avatar ? (
+						<Image source={{ uri: selectedChild.avatar }} style={styles.avatarSmall} />
 					) : (
-						<TouchableOpacity
-							style={styles.childSelectorCard}
-							onPress={openChildModal}
-							disabled={!children.length || switchingChild}
-						>
-							<View style={styles.childInfoRow}>
-								{currentChild?.avatar ? (
-									<Image source={{ uri: currentChild.avatar }} style={styles.childAvatarImg} />
-								) : (
-									<View style={styles.childAvatarCircle}>
-										<Text style={styles.childAvatarInitial}>
-											{(currentChild?.name || '?').charAt(0)}
-										</Text>
-									</View>
-								)}
-								<View>
-									<Text style={styles.childPrimaryName}>{currentChild?.name || 'Child'}</Text>
-									<Text style={styles.childAgeText}>{getAgeTextForChild(currentChild)}</Text>
-								</View>
-							</View>
-							{switchingChild ? (
-								<ActivityIndicator size="small" color="#7f8c8d" />
-							) : (
-								<Ionicons name="chevron-down" size={20} color="#7f8c8d" />
-							)}
-						</TouchableOpacity>
+						<View style={[styles.avatarSmall, { backgroundColor: theme.primary, alignItems: 'center', justifyContent: 'center' }]}>
+							<Text style={{ color: '#FFF', fontWeight: 'bold' }}>{selectedChild?.name?.[0] || '?'}</Text>
+						</View>
 					)}
-					{childrenError ? (
-						<ErrorState
-							message={childrenError}
-							fullWidth
-						/>
-					) : null}
+				</TouchableOpacity>
+			</View>
+
+			<ScrollView contentContainerStyle={styles.scrollContent} showsVerticalScrollIndicator={false}>
+
+				{/* TAB SELECTOR */}
+				<View style={styles.segmentedControl}>
+					{['percentile', 'weight', 'height', 'bmi'].map(tab => {
+						const isActive = activeChart === tab;
+						return (
+							<TouchableOpacity
+								key={tab}
+								style={[styles.segmentBtn, isActive && { backgroundColor: theme.primary }]}
+								onPress={() => setActiveChart(tab)}
+							>
+								<Text style={[styles.segmentText, isActive && { color: '#FFF' }]}>
+									{tab.charAt(0).toUpperCase() + tab.slice(1)}
+								</Text>
+							</TouchableOpacity>
+						);
+					})}
 				</View>
 
-				{/* Growth Trend Status Banner */}
-				{renderTrendBanner()}
-
-				{/* Chart Section */}
-				{!loadingTrend && !trendError && trendData.length > 0 && (
-					<View style={styles.chartContainer}>
-						<LinearGradient
-							colors={['#667eea', '#764ba2']}
-							style={styles.chartCard}
-						>
-							<View style={styles.chartHeader}>
-								<Text style={styles.chartTitle}>Child's Growth Progress</Text>
-								<View style={styles.toggleButtons}>
-									<TouchableOpacity
-										style={[
-											styles.toggleButton,
-											activeChart === 'percentile' && styles.activeButton,
-										]}
-										onPress={() => setActiveChart('percentile')}
-									>
-										<Text
-											style={[
-												styles.toggleText,
-												activeChart === 'percentile' && styles.activeText,
-											]}
-										>
-											Percentile
-										</Text>
-									</TouchableOpacity>
-									<TouchableOpacity
-										style={[
-											styles.toggleButton,
-											activeChart === 'weight' && styles.activeButton,
-										]}
-										onPress={() => setActiveChart('weight')}
-									>
-										<Text
-											style={[
-												styles.toggleText,
-												activeChart === 'weight' && styles.activeText,
-											]}
-										>
-											Weight
-										</Text>
-									</TouchableOpacity>
-									<TouchableOpacity
-										style={[
-											styles.toggleButton,
-											activeChart === 'height' && styles.activeButton,
-										]}
-										onPress={() => setActiveChart('height')}
-									>
-										<Text
-											style={[
-												styles.toggleText,
-												activeChart === 'height' && styles.activeText,
-											]}
-										>
-											Height
-										</Text>
-									</TouchableOpacity>
-									<TouchableOpacity
-										style={[
-											styles.toggleButton,
-											activeChart === 'bmi' && styles.activeButton,
-										]}
-										onPress={() => setActiveChart('bmi')}
-									>
-										<Text
-											style={[
-												styles.toggleText,
-												activeChart === 'bmi' && styles.activeText,
-											]}
-										>
-											BMI
-										</Text>
-									</TouchableOpacity>
-								</View>
+				{/* MAIN CHART CARD */}
+				<Animated.View style={[styles.mainCard, { opacity: fadeAnim, transform: [{ translateY: slideAnim }] }]}>
+					<View style={styles.cardHeader}>
+						<View>
+							<Text style={styles.metricLabel}>Current {theme.label}</Text>
+							<View style={styles.metricRow}>
+								<Text style={[styles.metricValue, { color: theme.primary }]}>{latestValue}</Text>
+								<Text style={styles.metricSuffix}>{theme.suffix}</Text>
 							</View>
-							{renderChart()}
-						</LinearGradient>
+						</View>
+						<View style={[styles.iconCircle, { backgroundColor: `${theme.primary}15` }]}>
+							<MaterialCommunityIcons name={theme.icon} size={24} color={theme.primary} />
+						</View>
 					</View>
-				)}
+
+					{renderChart()}
+
+				</Animated.View>
+
+				{/* INSIGHT CARD */}
+				<Animated.View style={[styles.insightCard, { opacity: fadeAnim, transform: [{ translateY: slideAnim }] }]}>
+					<Text style={styles.insightTitle}>Growth Update</Text>
+					<Text style={styles.insightText}>
+						{selectedChild?.name} is growing fast! 🚀 The current trend suggests a healthy development path. Keep monitoring monthly!
+					</Text>
+				</Animated.View>
+
 			</ScrollView>
 
-			{/* Child Selector Modal */}
-			<Modal
-				visible={showChildSelector}
-				transparent
-				animationType="none"
-				onRequestClose={closeChildModal}
-			>
-				<View style={styles.modalOverlay}>
-					{showChildOverlay && (
-						<TouchableOpacity
-							style={StyleSheet.absoluteFill}
-							activeOpacity={1}
-							onPress={closeChildModal}
-						/>
-					)}
-					<TouchableWithoutFeedback>
-						<Animated.View
-							style={[
-								styles.childSelectorModal,
-								{
-									transform: [
-										{
-											translateY: sheetAnim.interpolate({
-												inputRange: [0, 1],
-												outputRange: [300, 0],
-											}),
-										},
-									],
-								},
-							]}
-						>
-							<View style={styles.modalHeaderRow}>
-								<Text style={styles.modalTitle}>Switch Child</Text>
-								<TouchableOpacity onPress={closeChildModal}>
-									<Ionicons name="close" size={22} color="#2c3e50" />
-								</TouchableOpacity>
-							</View>
-							<ScrollView showsVerticalScrollIndicator={false}>
-								{children.map((child, idx) => (
-									<TouchableOpacity
-										key={child.id}
-										style={styles.childRow}
-										onPress={async () => {
-											await selectChild(child.id);
-											closeChildModal();
-										}}
-									>
-										{child.avatar ? (
-											<Image source={{ uri: child.avatar }} style={styles.childRowAvatar} />
-										) : (
-											<View style={styles.childRowAvatarPlaceholder}>
-												<Ionicons name="person" size={16} color="#667eea" />
-												</View>
-											)}
-											<View style={styles.childRowInfo}>
-												<Text style={styles.childRowName}>{child.name}</Text>
-												<Text style={styles.childRowAge}>{getAgeTextForChild(child)}</Text>
-											</View>
-											{idx === currentChildIndex && (
-												<Ionicons name="checkmark-circle" size={22} color="#667eea" />
-											)}
-										</TouchableOpacity>
-									))}
-							</ScrollView>
-						</Animated.View>
-					</TouchableWithoutFeedback>
-				</View>
+			{/* CHILD SELECTOR MODAL */}
+			<Modal visible={showChildSelector} transparent animationType="fade" onRequestClose={() => setShowChildSelector(false)}>
+				<TouchableOpacity style={styles.modalOverlay} onPress={() => setShowChildSelector(false)} activeOpacity={1}>
+					<View style={styles.modalContent}>
+						<Text style={styles.modalTitle}>Select Child</Text>
+						{children.map(child => (
+							<TouchableOpacity
+								key={child.id}
+								style={styles.childRow}
+								onPress={() => { selectChild(child.id); setShowChildSelector(false); }}
+							>
+								<View style={[styles.avatarSmall, { marginRight: 12, backgroundColor: '#E5E7EB' }]}>
+									{child.avatar ? <Image source={{ uri: child.avatar }} style={styles.avatarSmall} /> : null}
+								</View>
+								<Text style={[styles.childName, child.id === selectedChildId && { color: theme.primary, fontWeight: '700' }]}>
+									{child.name}
+								</Text>
+								{child.id === selectedChildId && <Ionicons name="checkmark-circle" size={24} color={theme.primary} />}
+							</TouchableOpacity>
+						))}
+					</View>
+				</TouchableOpacity>
 			</Modal>
 		</SafeAreaView>
 	);
-}
+};
 
 const styles = StyleSheet.create({
 	container: {
 		flex: 1,
-		backgroundColor: '#f8f9ff',
+		backgroundColor: '#F8FAFC',
 	},
 	header: {
 		flexDirection: 'row',
 		alignItems: 'center',
 		justifyContent: 'space-between',
-		paddingHorizontal: 24,
-		paddingTop: 20,
-		paddingBottom: 20,
-		backgroundColor: '#fff',
-		borderBottomWidth: 1,
-		borderBottomColor: '#f1f3f4',
+		paddingHorizontal: 20,
+		paddingVertical: 12,
+		zIndex: 10,
+		backgroundColor: '#F8FAFC', // Match bg to hide scroll over
 	},
-	backButton: {
+	childSelectorBar: {
+		flexDirection: 'row',
+		alignItems: 'center',
+		justifyContent: 'space-between',
+		backgroundColor: '#FFF',
+		marginHorizontal: 20,
+		marginBottom: 16,
+		paddingVertical: 8,
+		paddingHorizontal: 12,
+		borderRadius: 20,
+		shadowColor: '#000',
+		shadowOpacity: 0.05,
+		shadowRadius: 5,
+		elevation: 2,
+	},
+	childSelectorName: {
+		fontSize: 14,
+		fontWeight: '600',
+		color: '#374151',
+		marginLeft: 8,
+	},
+	avatarMini: {
+		width: 24,
+		height: 24,
+		borderRadius: 12,
+	},
+	backBtn: {
+		padding: 8,
+		borderRadius: 12,
+		backgroundColor: '#FFF',
+		shadowColor: '#000',
+		shadowOpacity: 0.05,
+		shadowRadius: 5,
+		elevation: 2,
+	},
+	headerTitle: {
+		fontSize: 18,
+		fontWeight: '700',
+		color: '#111827',
+	},
+	childBtn: {
+		padding: 2,
+		borderRadius: 20,
+		borderWidth: 2,
+		borderColor: '#FFF',
+		shadowColor: '#000',
+		shadowOpacity: 0.1,
+		shadowRadius: 4,
+		elevation: 3,
+	},
+	avatarSmall: {
+		width: 36,
+		height: 36,
+		borderRadius: 18,
+	},
+	scrollContent: {
+		padding: 20,
+		paddingBottom: 40,
+		minHeight: '100%',
+	},
+	// Background Artifacts - FIXED
+	bgDecorations: {
+		...StyleSheet.absoluteFillObject,
+		zIndex: -1,
+	},
+	bgRuler: {
+		position: 'absolute',
+		right: -60,
+		top: 100,
+		opacity: 0.5, // Brighter
+		transform: [{ rotate: '90deg' }]
+	},
+	bgSun: {
+		position: 'absolute',
+		left: -20,
+		top: -20,
+	},
+	bgFoot1: {
+		position: 'absolute',
+		bottom: 150,
+		left: 40,
+		transform: [{ rotate: '-15deg' }]
+	},
+	bgFoot2: {
+		position: 'absolute',
+		bottom: 250,
+		right: 30,
+		transform: [{ rotate: '25deg' }]
+	},
+	bgDuck: {
+		position: 'absolute',
+		top: 180,
+		left: -10,
+		opacity: 0.6,
+	},
+	bgBalloon: {
+		position: 'absolute',
+		top: 300,
+		right: -20,
+		transform: [{ rotate: '15deg' }]
+	},
+	bgStar1: {
+		position: 'absolute',
+		bottom: 50,
+		right: 100,
+	},
+
+	// Segmented Control
+	segmentedControl: {
+		flexDirection: 'row',
+		backgroundColor: '#FFF',
+		padding: 4,
+		borderRadius: 16,
+		marginBottom: 24,
+		shadowColor: '#000',
+		shadowOpacity: 0.05,
+		shadowRadius: 5,
+		elevation: 2,
+	},
+	segmentBtn: {
+		flex: 1,
+		paddingVertical: 10,
+		alignItems: 'center',
+		borderRadius: 12,
+	},
+	segmentText: {
+		fontSize: 13,
+		fontWeight: '600',
+		color: '#6B7280',
+	},
+
+	// Main Card
+	mainCard: {
+		backgroundColor: '#FFF',
+		borderRadius: 24,
+		padding: 20,
+		marginBottom: 24,
+		shadowColor: '#000',
+		shadowOpacity: 0.08,
+		shadowRadius: 15,
+		elevation: 8, // High premium shadow
+	},
+	cardHeader: {
+		flexDirection: 'row',
+		justifyContent: 'space-between',
+		alignItems: 'flex-start',
+		marginBottom: 16,
+	},
+	metricLabel: {
+		fontSize: 14,
+		color: '#6B7280',
+		fontWeight: '500',
+		marginBottom: 4,
+	},
+	metricRow: {
+		flexDirection: 'row',
+		alignItems: 'baseline',
+	},
+	metricValue: {
+		fontSize: 32,
+		fontWeight: '800',
+		color: '#111827',
+	},
+	metricSuffix: {
+		fontSize: 16,
+		color: '#9CA3AF',
+		marginLeft: 4,
+		fontWeight: '600',
+	},
+	iconCircle: {
 		width: 44,
 		height: 44,
 		borderRadius: 22,
-		backgroundColor: '#f8f9ff',
 		justifyContent: 'center',
 		alignItems: 'center',
 	},
-	headerTitle: {
-		fontSize: 20,
-		fontWeight: '700',
-		color: '#2c3e50',
-	},
-	sectionWrapper: {
-		paddingHorizontal: 20,
-		marginTop: 24,
-	},
-	sectionTitle: {
-		fontSize: 18,
-		fontWeight: '700',
-		color: '#2c3e50',
-		marginBottom: 16,
-	},
-	childSelectorCard: {
-		backgroundColor: '#fff',
-		borderRadius: 16,
-		padding: 16,
-		flexDirection: 'row',
-		alignItems: 'center',
-		justifyContent: 'space-between',
-		borderWidth: 1,
-		borderColor: '#f1f3f4',
-	},
-	childInfoRow: {
-		flexDirection: 'row',
+	emptyState: {
+		height: 220,
+		justifyContent: 'center',
 		alignItems: 'center',
 	},
-	childAvatarCircle: {
-		width: 40,
-		height: 40,
+	emptyText: {
+		color: '#9CA3AF',
+		fontStyle: 'italic',
+	},
+
+	// Insight
+	insightCard: {
+		backgroundColor: '#FFF',
+		padding: 20,
 		borderRadius: 20,
-		backgroundColor: '#667eea',
-		justifyContent: 'center',
-		alignItems: 'center',
-		marginRight: 12,
-	},
-	childAvatarInitial: {
-		color: '#fff',
-		fontSize: 18,
-		fontWeight: '700',
-	},
-	childAvatarImg: {
-		width: 40,
-		height: 40,
-		borderRadius: 20,
-		marginRight: 12,
-	},
-	childPrimaryName: {
-		fontSize: 16,
-		fontWeight: '600',
-		color: '#2c3e50',
-	},
-	childAgeText: {
-		fontSize: 14,
-		color: '#7f8c8d',
-	},
-	childLoadingBox: {
-		backgroundColor: '#fff',
-		borderRadius: 16,
-		paddingVertical: 16,
-		alignItems: 'center',
-		justifyContent: 'center',
-		borderWidth: 1,
-		borderColor: '#f1f3f4',
-	},
-	childLoadingText: {
-		marginTop: 8,
-		color: '#7f8c8d',
-		fontSize: 13,
-	},
-	errorText: {
-		marginTop: 8,
-		fontSize: 12,
-		color: '#d93025',
-	},
-	chartContainer: {
-		margin: 24,
-  },
-  chartCard: {
-    borderRadius: 24,
-    padding: 16,
-    shadowColor: '#667eea',
-    shadowOffset: { width: 0, height: 8 },
-    shadowOpacity: 0.2,
-    shadowRadius: 16,
-    elevation: 10,
-  },
-  chartHeader: {
-    marginBottom: 16,
-  },
-  chartTitle: {
-    fontSize: 18,
-    fontWeight: 'bold',
-    color: '#fff',
-    marginBottom: 12,
-  },
-  toggleButtons: {
-    flexDirection: 'row',
-    backgroundColor: 'rgba(255, 255, 255, 0.2)',
-    borderRadius: 12,
-  },
-  toggleButton: {
-    flex: 1,
-    paddingVertical: 10,
-    alignItems: 'center',
-    borderRadius: 12,
-  },
-  activeButton: {
-    backgroundColor: '#fff',
-  },
-  toggleText: {
-    fontSize: 14,
-    fontWeight: '600',
-    color: '#fff',
-  },
-  activeText: {
-    color: '#667eea',
-  	},
-	chart: {
-		borderRadius: 16,
-		marginTop: 8,
-	},
-	trendBannerWrapper: {
-		paddingHorizontal: 20,
-		marginTop: 24,
-	},
-	trendBannerCard: {
-		flexDirection: 'row',
-		alignItems: 'center',
-		backgroundColor: '#fff',
-		borderRadius: 16,
-		paddingVertical: 12,
-		paddingHorizontal: 14,
-		borderWidth: 1,
-		borderColor: '#eef0ff',
+		borderLeftWidth: 4,
+		borderLeftColor: '#F59E0B',
 		shadowColor: '#000',
-		shadowOffset: { width: 0, height: 4 },
-		shadowOpacity: 0.06,
+		shadowOpacity: 0.05,
 		shadowRadius: 8,
-		elevation: 2,
+		elevation: 3,
+		marginBottom: 40,
 	},
-	trendBannerIconCircle: {
-		width: 40,
-		height: 40,
-		borderRadius: 20,
-		backgroundColor: '#eef0ff',
-		alignItems: 'center',
-		justifyContent: 'center',
-		marginRight: 10,
+	insightTitle: {
+		fontSize: 16,
+		fontWeight: '700',
+		color: '#111827',
+		marginBottom: 8,
 	},
-	trendBannerText: {
-		flex: 1,
-	},
-	trendBannerTitle: {
+	insightText: {
 		fontSize: 14,
-		fontWeight: '600',
-		color: '#2c3e50',
+		color: '#4B5563',
+		lineHeight: 22,
 	},
+
+	// Modal
 	modalOverlay: {
 		flex: 1,
-		backgroundColor: 'rgba(0,0,0,0.35)',
-		justifyContent: 'flex-end',
+		backgroundColor: 'rgba(0,0,0,0.3)',
+		justifyContent: 'center',
+		padding: 24,
 	},
-	childSelectorModal: {
-		backgroundColor: '#fff',
-		borderTopLeftRadius: 20,
-		borderTopRightRadius: 20,
-		paddingHorizontal: 20,
-		paddingTop: 16,
-		paddingBottom: 24,
-		maxHeight: '70%',
-	},
-	modalHeaderRow: {
-		flexDirection: 'row',
-		alignItems: 'center',
-		justifyContent: 'space-between',
-		marginBottom: 12,
+	modalContent: {
+		backgroundColor: '#FFF',
+		borderRadius: 24,
+		padding: 24,
+		shadowColor: '#000',
+		shadowOpacity: 0.15,
+		shadowRadius: 20,
+		elevation: 10,
 	},
 	modalTitle: {
 		fontSize: 18,
 		fontWeight: '700',
-		color: '#2c3e50',
+		marginBottom: 16,
+		color: '#111827',
 	},
 	childRow: {
 		flexDirection: 'row',
 		alignItems: 'center',
-		paddingVertical: 10,
+		paddingVertical: 12,
+		borderBottomWidth: 1,
+		borderBottomColor: '#F3F4F6',
 	},
-	childRowAvatar: {
-		width: 36,
-		height: 36,
-		borderRadius: 18,
-		marginRight: 10,
-	},
-	childRowAvatarPlaceholder: {
-		width: 36,
-		height: 36,
-		borderRadius: 18,
-		marginRight: 10,
-		backgroundColor: '#e0e7ff',
-		alignItems: 'center',
-		justifyContent: 'center',
-	},
-	childRowInfo: {
+	childName: {
+		fontSize: 16,
+		color: '#374151',
 		flex: 1,
-	},
-	childRowName: {
-		fontSize: 15,
-		fontWeight: '600',
-		color: '#2c3e50',
-	},
-	childRowAge: {
-		fontSize: 13,
-		color: '#7f8c8d',
 	},
 });
 

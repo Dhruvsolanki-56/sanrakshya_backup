@@ -186,9 +186,8 @@ const ParentHomeScreen = ({ navigation }) => {
     { id: '3', name: 'Diet Plan', icon: 'nutrition-outline', screen: 'NutritionLifestyle', color: '#10B981' },
     { id: '4', name: 'Doctors', icon: 'medkit-outline', screen: 'FindDoctors', color: '#EF4444' },
     { id: '5', name: 'Growth', icon: 'bar-chart-outline', screen: 'GrowthChart', color: '#F59E0B' },
-    { id: '6', name: 'Chat', icon: 'chatbubbles-outline', screen: 'BalMitraChat', color: '#6366F1' },
+    { id: '6', name: 'AI Helper', icon: 'sparkles-outline', screen: 'BalMitraChat', color: '#6366F1' },
     { id: '7', name: 'Vaccines', icon: 'shield-checkmark-outline', screen: 'VaccinePlanner', color: '#0EA5E9' },
-    { id: '8', name: 'Symptom', icon: 'thermometer-outline', screen: 'SymptomChecker', color: '#E11D48' },
   ];
 
   // Dynamic "For You" Suggestions based on child data

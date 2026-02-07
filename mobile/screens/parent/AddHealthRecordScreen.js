@@ -13,57 +13,53 @@ import {
   Modal,
   TouchableWithoutFeedback,
   Animated,
-  Platform,
   RefreshControl,
+  Platform,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
-import { Ionicons } from '@expo/vector-icons';
+import { Ionicons, MaterialCommunityIcons } from '@expo/vector-icons';
 import { LinearGradient } from 'expo-linear-gradient';
 import ScreenHeader from '../../components/ScreenHeader';
 import LoadingState from '../../components/LoadingState';
 import ErrorState from '../../components/ErrorState';
 import * as DocumentPicker from 'expo-document-picker';
+import * as ImagePicker from 'expo-image-picker';
 import { healthRecordsService } from '../../services/healthRecordsService';
 import { useSelectedChild } from '../../contexts/SelectedChildContext';
+import { storage } from '../../services/storage';
+import { userService } from '../../services/userService';
 
 const { width, height } = Dimensions.get('window');
 
 const ReportTypeUI = {
-  Prescription: { icon: 'medical', color: ['#667eea', '#764ba2'], label: 'Prescription' },
-  LabReport: { icon: 'flask', color: ['#00b09b', '#96c93d'], label: 'Lab Report' },
-  VaccinationRecord: { icon: 'shield-checkmark', color: ['#FF5F6D', '#FFC371'], label: 'Vaccination' },
-  DischargeSummary: { icon: 'exit', color: ['#11998e', '#38ef7d'], label: 'Discharge' },
-  ImagingScan: { icon: 'scan', color: ['#fc4a1a', '#f7b733'], label: 'Scan' },
-  Other: { icon: 'document-text', color: ['#485563', '#29323c'], label: 'Other' },
+  Prescription: { icon: 'file-document-edit-outline', color: ['#6366F1', '#818CF8'], label: 'Prescription' },
+  LabReport: { icon: 'flask-outline', color: ['#10B981', '#34D399'], label: 'Lab Report' },
+  VaccinationRecord: { icon: 'shield-check-outline', color: ['#F59E0B', '#FBBF24'], label: 'Vaccination' },
+  DischargeSummary: { icon: 'hospital-building', color: ['#EF4444', '#F87171'], label: 'Discharge' },
+  ImagingScan: { icon: 'radiology-box', color: ['#8B5CF6', '#A78BFA'], label: 'Scan/X-Ray' },
+  Other: { icon: 'file-outline', color: ['#64748B', '#94A3B8'], label: 'Other Document' },
 };
 
 const AddHealthRecordScreen = ({ navigation }) => {
-  // Child state (global)
-  const {
-    children,
-    selectedChild,
-    selectedChildId,
-    loadingChildren,
-    switchingChild,
-    error: childrenError,
-    selectChild,
-  } = useSelectedChild();
+  // Local Child State (to ensure independence if needed, or sync with global)
+  // Reverting to local management to match VaccinePlanner pattern for consistency if context fails
+  const [children, setChildren] = useState([]);
+  const [currentChildIndex, setCurrentChildIndex] = useState(0);
+  const [loadingChildren, setLoadingChildren] = useState(true);
+  const currentChild = useMemo(() => children[currentChildIndex], [children, currentChildIndex]);
+  const [childrenError, setChildrenError] = useState('');
 
-  const currentChild = selectedChild;
-  const currentChildIndex = useMemo(
-    () => children.findIndex(c => String(c.id) === String(selectedChildId)),
-    [children, selectedChildId]
-  );
+  // Child Selector UI
   const [showChildSelector, setShowChildSelector] = useState(false);
   const [showChildOverlay, setShowChildOverlay] = useState(false);
   const sheetAnim = useRef(new Animated.Value(0)).current;
 
-  // Reports state
+  // Reports
   const [reports, setReports] = useState([]);
   const [loadingReports, setLoadingReports] = useState(false);
   const [refreshing, setRefreshing] = useState(false);
 
-  // Upload state
+  // Upload
   const [uploadModalVisible, setUploadModalVisible] = useState(false);
   const [uploading, setUploading] = useState(false);
   const [formData, setFormData] = useState({
@@ -73,39 +69,53 @@ const AddHealthRecordScreen = ({ navigation }) => {
     file: null,
   });
 
-  // View state
+  // Viewer
   const [selectedReport, setSelectedReport] = useState(null);
   const [viewModalVisible, setViewModalVisible] = useState(false);
   const [loadingDetail, setLoadingDetail] = useState(false);
-  const [loadingImage, setLoadingImage] = useState(false);
 
-  const fetchReportDetail = async (reportId) => {
-    if (!selectedChildId) return;
-    setLoadingDetail(true);
+  // Source Picker Modal
+  const [showSourcePicker, setShowSourcePicker] = useState(false);
+
+  // --- Child Loading Logic (Matching Vaccine Planner style) ---
+  const loadChildren = useCallback(async () => {
+    setLoadingChildren(true);
+    setChildrenError('');
     try {
-      // Use getReportContent to handle binary blobs / Data URIs directly
-      const content = await healthRecordsService.getReportContent(selectedChildId, reportId);
-      if (content) {
-        if (typeof content === 'string') {
-          setSelectedReport(prev => ({ ...prev, report_image: content }));
-        } else {
-          setSelectedReport(prev => ({ ...prev, ...content }));
-        }
+      const data = await userService.getParentHome();
+      const mapped = await Promise.all(
+        (data?.children || []).map(async (c, idx) => {
+          const id = String(c.child_id || idx + 1);
+          let avatar;
+          try {
+            const src = await userService.getChildPhotoSource(id, c.photo_url || c.avatar_url || null);
+            avatar = src?.uri;
+          } catch (_) { avatar = undefined; }
+          return {
+            id,
+            name: c.name || c.full_name || 'Child',
+            avatar,
+            dobRaw: c.date_of_birth,
+          };
+        })
+      );
+      setChildren(mapped);
+
+      if (mapped.length > 0) {
+        const storedId = await storage.getSelectedChildId();
+        const idx = mapped.findIndex(c => String(c.id) === String(storedId));
+        setCurrentChildIndex(idx >= 0 ? idx : 0);
       }
     } catch (err) {
-      console.error('Error fetching report detail:', err);
-      Alert.alert('Error', 'Unable to retrieve document content.');
+      setChildrenError('Unable to load profile.');
     } finally {
-      setLoadingDetail(false);
+      setLoadingChildren(false);
     }
-  };
+  }, []);
 
-  useEffect(() => {
-    if (viewModalVisible && selectedReport?.report_id) {
-      fetchReportDetail(selectedReport.report_id);
-    }
-  }, [viewModalVisible]);
+  useEffect(() => { loadChildren(); }, [loadChildren]);
 
+  // --- Reports Loading ---
   const fetchReports = useCallback(async (childId, isRefreshing = false) => {
     if (!childId) return;
     if (isRefreshing) setRefreshing(true);
@@ -114,577 +124,380 @@ const AddHealthRecordScreen = ({ navigation }) => {
     try {
       const data = await healthRecordsService.getReports(childId);
       const reportList = Array.isArray(data) ? data : (data?.reports || []);
-      setReports([...reportList]);
+      // Sort by date desc
+      reportList.sort((a, b) => new Date(b.created_at) - new Date(a.created_at));
+      setReports(reportList);
     } catch (err) {
-      console.error('Error fetching reports:', err);
-      if (!isRefreshing) Alert.alert('Error', 'Unable to access medical vault.');
+      if (!isRefreshing) console.log('Vault access error'); // Silent fail for UX
     } finally {
       setLoadingReports(false);
       setRefreshing(false);
     }
   }, []);
 
-  // Load reports whenever selected child changes
   useEffect(() => {
-    if (!selectedChildId) {
-      setReports([]);
+    if (currentChild?.id) {
+      fetchReports(currentChild.id);
+    }
+  }, [currentChild?.id, fetchReports]);
+
+
+  // --- Actions ---
+  const handlePickDocument = () => {
+    // Show the source picker modal
+    setShowSourcePicker(true);
+  };
+
+  const pickFromCamera = async () => {
+    setShowSourcePicker(false);
+    const { status } = await ImagePicker.requestCameraPermissionsAsync();
+    if (status !== 'granted') {
+      Alert.alert('Camera Access', 'Please grant camera access to take photos.');
       return;
     }
-    fetchReports(selectedChildId);
-  }, [selectedChildId, fetchReports]);
-
-  const formatAgeText = (dobRaw) => {
-    if (!dobRaw) return '';
-    const dob = new Date(dobRaw);
-    if (Number.isNaN(dob.getTime())) return '';
-    const now = new Date();
-    let years = now.getFullYear() - dob.getFullYear();
-    let months = now.getMonth() - dob.getMonth();
-    const dayDiff = now.getDate() - dob.getDate();
-    if (dayDiff < 0) months -= 1;
-    if (months < 0) { years -= 1; months += 12; }
-    if (years < 0) years = 0;
-    if (months < 0) months = 0;
-    return `${years} years ${months} ${months === 1 ? 'month' : 'months'}`;
+    try {
+      const result = await ImagePicker.launchCameraAsync({
+        mediaTypes: ['images'],
+        quality: 0.8,
+      });
+      if (!result.canceled && result.assets?.length > 0) {
+        const asset = result.assets[0];
+        setFormData(prev => ({ ...prev, file: { uri: asset.uri, name: asset.fileName || `photo_${Date.now()}.jpg`, mimeType: asset.mimeType || 'image/jpeg' } }));
+      }
+    } catch (e) { }
   };
 
-  const getAgeTextForChild = (child) => {
-    if (!child) return '';
-    const yearsFromApi = typeof child.ageYears === 'number' ? child.ageYears : null;
-    const monthsFromApi = typeof child.ageMonths === 'number' ? child.ageMonths : null;
-    if (yearsFromApi != null || monthsFromApi != null) {
-      const years = yearsFromApi != null ? yearsFromApi : 0;
-      const months = monthsFromApi != null ? monthsFromApi : 0;
-      return `${years} ${years === 1 ? 'year' : 'years'} ${months} ${months === 1 ? 'month' : 'months'}`;
+  const pickFromGallery = async () => {
+    setShowSourcePicker(false);
+    const { status } = await ImagePicker.requestMediaLibraryPermissionsAsync();
+    if (status !== 'granted') {
+      Alert.alert('Gallery Access', 'Please grant gallery access to select photos.');
+      return;
     }
-    return formatAgeText(child.dobRaw);
+    try {
+      const result = await ImagePicker.launchImageLibraryAsync({
+        mediaTypes: ['images'],
+        quality: 0.8,
+      });
+      if (!result.canceled && result.assets?.length > 0) {
+        const asset = result.assets[0];
+        setFormData(prev => ({ ...prev, file: { uri: asset.uri, name: asset.fileName || `image_${Date.now()}.jpg`, mimeType: asset.mimeType || 'image/jpeg' } }));
+      }
+    } catch (e) { }
   };
 
-  const handlePickDocument = async () => {
+  const pickFromFiles = async () => {
+    setShowSourcePicker(false);
     try {
       const result = await DocumentPicker.getDocumentAsync({
         type: ['image/*', 'application/pdf'],
         copyToCacheDirectory: true,
       });
-
       if (!result.canceled && result.assets && result.assets.length > 0) {
         setFormData((prev) => ({ ...prev, file: result.assets[0] }));
       }
-    } catch (err) {
-      console.error('Error picking document:', err);
-    }
+    } catch (err) { }
   };
 
   const handleUpload = async () => {
-    if (!formData.title.trim()) {
-      Alert.alert('Required', 'Please enter a title for this record.');
-      return;
-    }
-    if (!formData.file) {
-      Alert.alert('Required', 'Please select a document or image to upload.');
-      return;
-    }
-
-    if (!selectedChildId) {
-      Alert.alert('Missing child', 'Please select a child first.');
+    if (!formData.title.trim() || !formData.file) {
+      Alert.alert('Vault Entry Incomplete', 'Please provide a title and select a document.');
       return;
     }
 
     setUploading(true);
     try {
-      await healthRecordsService.uploadReport(selectedChildId, formData);
-      Alert.alert('Success', 'Health record uploaded successfully.');
+      await healthRecordsService.uploadReport(currentChild.id, formData);
       setUploadModalVisible(false);
-      setFormData({
-        report_type: 'Prescription',
-        title: '',
-        description: '',
-        file: null,
-      });
-      fetchReports(selectedChildId);
+      setFormData({ report_type: 'Prescription', title: '', description: '', file: null });
+      fetchReports(currentChild.id);
+      Alert.alert('Secured', 'Document safely added to the vault.');
     } catch (err) {
-      console.error('Upload error:', err);
-      Alert.alert('Upload Failed', err.message || 'Something went wrong while uploading.');
+      Alert.alert('Upload Failed', 'Could not secure document. Try again.');
     } finally {
       setUploading(false);
     }
   };
 
   const handleDelete = (reportId) => {
-    Alert.alert(
-      'Delete Record',
-      'Are you sure you want to delete this health record?',
-      [
-        { text: 'Cancel', style: 'cancel' },
-        {
-          text: 'Delete',
-          style: 'destructive',
-          onPress: async () => {
-            try {
-              if (!selectedChildId) {
-                Alert.alert('Missing child', 'Please select a child first.');
-                return;
-              }
-              await healthRecordsService.deleteReport(selectedChildId, reportId);
-              setReports((prev) => prev.filter((r) => r.report_id !== reportId));
-              if (selectedReport?.report_id === reportId) setViewModalVisible(false);
-              Alert.alert('Success', 'Record deleted.');
-            } catch (err) {
-              Alert.alert('Error', 'Unable to delete record.');
-            }
-          },
-        },
-      ]
-    );
+    Alert.alert('Remove from Vault?', 'This action cannot be undone.', [
+      { text: 'Cancel', style: 'cancel' },
+      {
+        text: 'Remove', style: 'destructive', onPress: async () => {
+          try {
+            await healthRecordsService.deleteReport(currentChild.id, reportId);
+            setReports(prev => prev.filter(r => r.report_id !== reportId));
+            setViewModalVisible(false);
+          } catch (e) { Alert.alert('Error', 'Could not delete.'); }
+        }
+      }
+    ]);
   };
 
+  const fetchReportDetail = async (reportId) => {
+    setLoadingDetail(true);
+    try {
+      const content = await healthRecordsService.getReportContent(currentChild.id, reportId);
+      if (content) {
+        if (typeof content === 'string') setSelectedReport(prev => ({ ...prev, report_image: content }));
+        else setSelectedReport(prev => ({ ...prev, ...content }));
+      }
+    } catch (e) { Alert.alert('Access Denied', 'Document content unavailable.'); }
+    finally { setLoadingDetail(false); }
+  };
+
+  useEffect(() => {
+    if (viewModalVisible && selectedReport?.report_id) fetchReportDetail(selectedReport.report_id);
+  }, [viewModalVisible]);
+
+
+  // --- UI Helpers ---
   const openChildModal = () => {
-    if (loadingChildren || !children.length) return;
     setShowChildSelector(true);
     setShowChildOverlay(false);
     sheetAnim.setValue(0);
-    Animated.timing(sheetAnim, {
-      toValue: 1,
-      duration: 250,
-      useNativeDriver: true,
-    }).start(({ finished }) => {
-      if (finished) {
-        setShowChildOverlay(true);
-      }
-    });
+    Animated.timing(sheetAnim, { toValue: 1, duration: 250, useNativeDriver: true }).start(({ finished }) => { if (finished) setShowChildOverlay(true); });
   };
 
   const closeChildModal = () => {
     setShowChildOverlay(false);
-    Animated.timing(sheetAnim, {
-      toValue: 0,
-      duration: 250,
-      useNativeDriver: true,
-    }).start(({ finished }) => {
-      if (finished) {
-        setShowChildSelector(false);
-      }
-    });
+    Animated.timing(sheetAnim, { toValue: 0, duration: 250, useNativeDriver: true }).start(({ finished }) => { if (finished) setShowChildSelector(false); });
   };
 
   const renderReportItem = ({ item }) => {
     const ui = ReportTypeUI[item.report_type] || ReportTypeUI.Other;
     return (
       <TouchableOpacity
-        style={styles.reportCard}
-        onPress={() => {
-          setSelectedReport(item);
-          setViewModalVisible(true);
-        }}
+        style={styles.recordCard}
+        onPress={() => { setSelectedReport(item); setViewModalVisible(true); }}
+        activeOpacity={0.7}
       >
-        <LinearGradient
-          colors={ui.color}
-          start={{ x: 0, y: 0 }}
-          end={{ x: 1, y: 1 }}
-          style={styles.iconCircle}
-        >
-          <Ionicons name={ui.icon} size={18} color="#fff" />
-        </LinearGradient>
-        <View style={styles.reportInfo}>
-          <Text style={styles.reportTitle} numberOfLines={1}>{item.title}</Text>
-          <Text style={styles.reportMeta}>{ui.label} • {new Date(item.created_at).toLocaleDateString()}</Text>
+        <View style={styles.iconContainer}>
+          <LinearGradient colors={ui.color} style={styles.iconGradient}>
+            <MaterialCommunityIcons name={ui.icon} size={24} color="#FFF" />
+          </LinearGradient>
         </View>
-        <Ionicons name="chevron-forward" size={18} color="#bdc3c7" />
+        <View style={styles.recordMeta}>
+          <Text style={styles.recordTitle} numberOfLines={1}>{item.title}</Text>
+          <Text style={styles.recordDate}>{new Date(item.created_at).toLocaleDateString()} • {ui.label}</Text>
+        </View>
+        <IconBtn name="chevron-forward" size={20} color="#CBD5E1" />
       </TouchableOpacity>
     );
   };
 
+  const IconBtn = ({ name, size, color }) => (<Ionicons name={name} size={size} color={color} />);
+
   return (
     <SafeAreaView style={styles.container}>
+      <ScreenHeader title="Medical Vault" onBackPress={() => navigation.goBack()} />
 
-      <ScreenHeader
-        title="Health Records"
-        onBackPress={() => navigation.goBack()}
-      />
+      {/* Child Filter Pill - Reused Design */}
+      <View style={styles.topFilterBar}>
+        <TouchableOpacity style={styles.childPill} onPress={openChildModal}>
+          {currentChild?.avatar ? (
+            <Image source={{ uri: currentChild.avatar }} style={styles.miniAvatar} />
+          ) : (
+            <View style={styles.miniAvatarPlaceholder}><Text style={styles.miniAvatarText}>{(currentChild?.name || '?').charAt(0)}</Text></View>
+          )}
+          <Text style={styles.childPillName}>{currentChild?.name || 'Loading...'}</Text>
+          <Ionicons name="caret-down" size={12} color="#64748B" />
+        </TouchableOpacity>
+        <View style={styles.safeBadge}>
+          <MaterialCommunityIcons name="shield-check" size={14} color="#10B981" />
+          <Text style={styles.safeText}>Encrypted</Text>
+        </View>
+      </View>
 
       <ScrollView
+        contentContainerStyle={{ paddingBottom: 100 }}
         showsVerticalScrollIndicator={false}
-        refreshControl={
-          <RefreshControl
-            refreshing={refreshing}
-            onRefresh={() => selectedChildId && fetchReports(selectedChildId, true)}
-          />
-        }
+        refreshControl={<RefreshControl refreshing={refreshing} onRefresh={() => fetchReports(currentChild?.id, true)} />}
       >
-        {/* Child Selector */}
-        <View style={styles.sectionWrapper}>
-          <Text style={styles.sectionTitle}>Child</Text>
-          {loadingChildren ? (
-            <LoadingState
-              message="Loading child details..."
-              size="small"
-              style={styles.childLoadingBox}
-            />
-          ) : (
-            <TouchableOpacity
-              style={styles.childSelectorCard}
-              onPress={openChildModal}
-              disabled={!children.length || switchingChild}
-            >
-              <View style={styles.childInfoRow}>
-                {currentChild?.avatar ? (
-                  <Image source={{ uri: currentChild.avatar }} style={styles.childAvatarImg} />
-                ) : (
-                  <View style={styles.childAvatarCircle}>
-                    <Text style={styles.childAvatarInitial}>
-                      {(currentChild?.name || '?').charAt(0)}
-                    </Text>
-                  </View>
-                )}
-                <View>
-                  <Text style={styles.childPrimaryName}>{currentChild?.name || 'Child'}</Text>
-                  <Text style={styles.childAgeText}>{getAgeTextForChild(currentChild)}</Text>
-                </View>
-              </View>
-              {switchingChild ? (
-                <ActivityIndicator size="small" color="#7f8c8d" />
-              ) : (
-                <Ionicons name="chevron-down" size={20} color="#7f8c8d" />
-              )}
+        {loadingReports && !refreshing ? (
+          <LoadingState message="Unlocking Vault..." />
+        ) : reports.length === 0 ? (
+          <View style={styles.emptyState}>
+            <View style={styles.lockCircle}>
+              <MaterialCommunityIcons name="lock-outline" size={60} color="#CBD5E1" />
+            </View>
+            <Text style={styles.emptyTitle}>Vault is Empty</Text>
+            <Text style={styles.emptySub}>Securely store prescriptions, reports, and scans here.</Text>
+            <TouchableOpacity style={styles.emptyBtn} onPress={() => setUploadModalVisible(true)}>
+              <Text style={styles.emptyBtnText}>Add First Record</Text>
             </TouchableOpacity>
-          )}
-          {childrenError ? (
-            <ErrorState
-              message={childrenError}
-              fullWidth
-            />
-          ) : null}
-        </View>
-
-        {/* Reports Listing */}
-        <View style={styles.sectionWrapper}>
-          <View style={styles.titleRow}>
-            <Text style={styles.sectionTitle}>Medical Documents</Text>
-            {reports.length > 0 && (
-              <Text style={styles.countBadge}>{reports.length}</Text>
-            )}
           </View>
-
-          {loadingReports && !refreshing ? (
-            <View style={styles.loadingReportsBox}>
-              <LoadingState
-                message="Accessing Your Vault..."
-                size="large"
-              />
-            </View>
-          ) : reports.length === 0 ? (
-            <View style={styles.themeBannerContainer}>
-              <LinearGradient
-                colors={['#ffffff', '#f8f9ff']}
-                style={styles.themeBannerGrad}
-              >
-                <View style={styles.bannerIconOuter}>
-                  <LinearGradient
-                    colors={['#667eea', '#764ba2']}
-                    style={styles.bannerIconInner}
-                  >
-                    <Ionicons name="shield-checkmark" size={40} color="#fff" />
-                  </LinearGradient>
-                  <View style={styles.bannerCircle1} />
-                  <View style={styles.bannerCircle2} />
-                </View>
-
-                <Text style={styles.themeBannerTitle}>Medical Vault</Text>
-                <Text style={styles.themeBannerSubtitle}>
-                  Your secure space for prescriptions, lab reports, and vaccination records. Keep your family's health history safe.
-                </Text>
-
-                <TouchableOpacity
-                  style={styles.themeBannerBtn}
-                  onPress={() => setUploadModalVisible(true)}
-                  activeOpacity={0.8}
-                >
-                  <LinearGradient
-                    colors={['#667eea', '#764ba2']}
-                    start={{ x: 0, y: 0 }}
-                    end={{ x: 1, y: 1 }}
-                    style={styles.themeBannerBtnGrad}
-                  >
-                    <Ionicons name="add" size={20} color="#fff" style={{ marginRight: 6 }} />
-                    <Text style={styles.themeBannerBtnText}>Add First Record</Text>
-                  </LinearGradient>
-                </TouchableOpacity>
-              </LinearGradient>
-            </View>
-          ) : (
-            <View style={styles.listContainer}>
-              {reports.map((item) => (
-                <View key={String(item.report_id)}>
-                  {renderReportItem({ item })}
-                </View>
-              ))}
-            </View>
-          )}
-        </View>
-        <View style={{ height: 100 }} />
+        ) : (
+          <View style={styles.listContainer}>
+            {reports.map((r, i) => (
+              <View key={i}>{renderReportItem({ item: r })}</View>
+            ))}
+          </View>
+        )}
       </ScrollView>
 
       {/* Floating Action Button */}
-      <TouchableOpacity
-        style={styles.fab}
-        onPress={() => setUploadModalVisible(true)}
-      >
-        <LinearGradient
-          colors={['#667eea', '#764ba2']}
-          style={styles.fabGradient}
-        >
-          <Ionicons name="add" size={32} color="#fff" />
+      <TouchableOpacity style={styles.fab} onPress={() => setUploadModalVisible(true)} activeOpacity={0.8}>
+        <LinearGradient colors={['#4F46E5', '#6366F1']} style={styles.fabGradient}>
+          <Ionicons name="add" size={30} color="#FFF" />
         </LinearGradient>
       </TouchableOpacity>
 
       {/* Upload Modal */}
-      <Modal
-        visible={uploadModalVisible}
-        animationType="slide"
-        onRequestClose={() => setUploadModalVisible(false)}
-      >
-        <SafeAreaView style={styles.modalContainer}>
-          <View style={styles.modalHeader}>
-            <TouchableOpacity onPress={() => setUploadModalVisible(false)} style={styles.modalCloseSmall}>
-              <Ionicons name="close" size={28} color="#2c3e50" />
-            </TouchableOpacity>
-            <Text style={styles.modalTitle}>Upload Record</Text>
-            <View style={{ width: 44 }} />
-          </View>
-
-          <ScrollView style={styles.modalScroll} keyboardShouldPersistTaps="handled" showsVerticalScrollIndicator={false}>
-            <Text style={styles.label}>Select Report Type</Text>
-            <View style={styles.typeGrid}>
-              {Object.keys(ReportTypeUI).map((type) => (
-                <TouchableOpacity
-                  key={type}
-                  style={[
-                    styles.gridItem,
-                    formData.report_type === type && styles.activeGridItem
-                  ]}
-                  onPress={() => setFormData(prev => ({ ...prev, report_type: type }))}
-                >
-                  <LinearGradient
-                    colors={formData.report_type === type ? ReportTypeUI[type].color : ['#f8f9ff', '#f8f9ff']}
-                    style={styles.gridIconBox}
-                  >
-                    <Ionicons
-                      name={ReportTypeUI[type].icon}
-                      size={24}
-                      color={formData.report_type === type ? '#fff' : '#bdc3c7'}
-                    />
-                  </LinearGradient>
-                  <Text style={[
-                    styles.gridLabel,
-                    formData.report_type === type && styles.activeGridLabel
-                  ]}>{ReportTypeUI[type].label}</Text>
-                </TouchableOpacity>
-              ))}
+      <Modal visible={uploadModalVisible} animationType="slide" transparent>
+        <View style={styles.modalOverlay}>
+          <TouchableOpacity style={StyleSheet.absoluteFill} onPress={() => setUploadModalVisible(false)} />
+          <View style={styles.uploadSheet}>
+            <View style={styles.sheetHeader}>
+              <Text style={styles.sheetTitle}>Add to Vault</Text>
+              <TouchableOpacity onPress={() => setUploadModalVisible(false)}><Ionicons name="close-circle" size={28} color="#94A3B8" /></TouchableOpacity>
             </View>
 
-            <View style={styles.formSection}>
-              <Text style={styles.label}>Record Title</Text>
+            <ScrollView showsVerticalScrollIndicator={false} style={{ maxHeight: height * 0.7 }}>
+              <Text style={styles.label}>Document Type</Text>
+              <View style={styles.typeGrid}>
+                {Object.keys(ReportTypeUI).map(key => {
+                  const isActive = formData.report_type === key;
+                  return (
+                    <TouchableOpacity
+                      key={key}
+                      style={[styles.typeCard, isActive && styles.typeCardActive]}
+                      onPress={() => setFormData(prev => ({ ...prev, report_type: key }))}
+                    >
+                      <MaterialCommunityIcons
+                        name={ReportTypeUI[key].icon}
+                        size={24}
+                        color={isActive ? ReportTypeUI[key].color[0] : '#94A3B8'}
+                      />
+                      <Text style={[styles.typeLabel, isActive && { color: '#1E293B', fontWeight: '700' }]}>{ReportTypeUI[key].label}</Text>
+                    </TouchableOpacity>
+                  );
+                })}
+              </View>
+
+              <Text style={styles.label}>Title</Text>
               <TextInput
                 style={styles.input}
-                placeholder="e.g. Eye Specialist Visit"
+                placeholder="e.g. Blood Test Report"
                 value={formData.title}
-                onChangeText={text => setFormData(prev => ({ ...prev, title: text }))}
-                placeholderTextColor="#bdc3c7"
+                onChangeText={t => setFormData(prev => ({ ...prev, title: t }))}
               />
 
-              <Text style={styles.label}>Notes (Optional)</Text>
-              <TextInput
-                style={[styles.input, styles.textArea]}
-                placeholder="Brief summary of the record..."
-                multiline
-                numberOfLines={4}
-                value={formData.description}
-                onChangeText={text => setFormData(prev => ({ ...prev, description: text }))}
-                placeholderTextColor="#bdc3c7"
-              />
-            </View>
-
-            <Text style={styles.label}>File Attachment</Text>
-            <TouchableOpacity
-              style={[styles.perfectFilePicker, formData.file && styles.filePickedBorder]}
-              onPress={handlePickDocument}
-            >
-              <View style={styles.pickerInner}>
-                <Ionicons
-                  name={formData.file ? 'checkmark-circle' : 'cloud-upload'}
-                  size={44}
-                  color={formData.file ? '#2ecc71' : '#667eea'}
-                />
-                <View style={styles.pickerTextContent}>
-                  <Text style={styles.filePickerMainText}>
-                    {formData.file ? formData.file.name : 'Choose Document'}
-                  </Text>
-                  <Text style={styles.filePickerSubText}>
-                    {formData.file ? `Ready to upload (${(formData.file.size / 1024 / 1024).toFixed(2)}MB)` : 'Supports JPG, PNG and PDF'}
-                  </Text>
-                </View>
-              </View>
-            </TouchableOpacity>
-
-            <TouchableOpacity
-              style={[styles.perfectUploadButton, uploading && styles.disabledBtn]}
-              onPress={handleUpload}
-              disabled={uploading}
-            >
-              <LinearGradient
-                colors={['#667eea', '#764ba2']}
-                style={styles.perfectUploadGradient}
-              >
-                {uploading ? (
-                  <View style={styles.btnLoadingRow}>
-                    <ActivityIndicator color="#fff" size="small" style={{ marginRight: 10 }} />
-                    <Text style={styles.perfectUploadText}>Storing Document...</Text>
+              <Text style={styles.label}>File</Text>
+              <TouchableOpacity style={styles.filePicker} onPress={handlePickDocument}>
+                {formData.file ? (
+                  <View style={styles.filePreview}>
+                    <MaterialCommunityIcons name="file-document" size={30} color="#4F46E5" />
+                    <View style={{ flex: 1, marginLeft: 10 }}>
+                      <Text style={styles.fileName} numberOfLines={1}>{formData.file.name}</Text>
+                      <Text style={styles.fileSize}>Ready to upload</Text>
+                    </View>
+                    <Ionicons name="checkmark-circle" size={24} color="#10B981" />
                   </View>
                 ) : (
-                  <Text style={styles.perfectUploadText}>Save to Medical Vault</Text>
+                  <View style={styles.filePlaceholder}>
+                    <Ionicons name="cloud-upload-outline" size={32} color="#94A3B8" />
+                    <Text style={styles.filePlaceText}>Tap to select document/image</Text>
+                  </View>
                 )}
-              </LinearGradient>
-            </TouchableOpacity>
-            <View style={{ height: 40 }} />
-          </ScrollView>
-        </SafeAreaView>
+              </TouchableOpacity>
+
+              <TouchableOpacity
+                style={[styles.uploadBtn, uploading && styles.uploadBtnDisabled]}
+                onPress={handleUpload}
+                disabled={uploading}
+              >
+                {uploading ? <ActivityIndicator color="#FFF" /> : <Text style={styles.uploadBtnText}>Secure Upload</Text>}
+              </TouchableOpacity>
+              <View style={{ height: 20 }} />
+            </ScrollView>
+          </View>
+
+          {/* Source Picker Overlay (Nested to work on Android) */}
+          {showSourcePicker && (
+            <View style={[StyleSheet.absoluteFill, { zIndex: 10, justifyContent: 'flex-end' }]}>
+              <TouchableOpacity style={StyleSheet.absoluteFill} onPress={() => setShowSourcePicker(false)}>
+                <View style={{ flex: 1, backgroundColor: 'rgba(0,0,0,0.2)' }} />
+              </TouchableOpacity>
+              <View style={[styles.sourcePickerSheet, { elevation: 10 }]}>
+                <View style={styles.sheetHeader}>
+                  <Text style={styles.sheetTitle}>Choose Source</Text>
+                  <TouchableOpacity onPress={() => setShowSourcePicker(false)}><Ionicons name="close-circle" size={28} color="#94A3B8" /></TouchableOpacity>
+                </View>
+                <View style={{ flexDirection: 'row', justifyContent: 'space-around', paddingVertical: 20 }}>
+                  <TouchableOpacity style={styles.sourceOption} onPress={pickFromCamera}>
+                    <View style={[styles.sourceIconWrap, { backgroundColor: '#DBEAFE' }]}>
+                      <Ionicons name="camera" size={28} color="#2563EB" />
+                    </View>
+                    <Text style={styles.sourceLabel}>Camera</Text>
+                  </TouchableOpacity>
+                  <TouchableOpacity style={styles.sourceOption} onPress={pickFromGallery}>
+                    <View style={[styles.sourceIconWrap, { backgroundColor: '#FEE2E2' }]}>
+                      <Ionicons name="images" size={28} color="#DC2626" />
+                    </View>
+                    <Text style={styles.sourceLabel}>Gallery</Text>
+                  </TouchableOpacity>
+                  <TouchableOpacity style={styles.sourceOption} onPress={pickFromFiles}>
+                    <View style={[styles.sourceIconWrap, { backgroundColor: '#D1FAE5' }]}>
+                      <Ionicons name="document-attach" size={28} color="#059669" />
+                    </View>
+                    <Text style={styles.sourceLabel}>Files</Text>
+                  </TouchableOpacity>
+                </View>
+              </View>
+            </View>
+          )}
+        </View>
       </Modal>
 
       {/* View Modal */}
-      <Modal
-        visible={viewModalVisible}
-        transparent
-        animationType="fade"
-      >
-        <View style={styles.blurOverlay}>
-          <SafeAreaView style={styles.viewContent}>
-            <View style={styles.viewHeader}>
-              <TouchableOpacity onPress={() => setViewModalVisible(false)} style={styles.viewClose}>
-                <Ionicons name="close" size={28} color="#fff" />
-              </TouchableOpacity>
-              <View style={styles.viewHeaderText}>
-                <Text style={styles.viewTitle}>{selectedReport?.title}</Text>
-                <Text style={styles.viewMetaText}>
-                  {selectedReport?.report_type} • {selectedReport?.created_at ? new Date(selectedReport.created_at).toLocaleDateString() : '...'}
-                </Text>
-              </View>
-              <TouchableOpacity onPress={() => handleDelete(selectedReport?.report_id)} style={styles.viewDelete}>
-                <Ionicons name="trash-outline" size={24} color="#ff7675" />
-              </TouchableOpacity>
+      <Modal visible={viewModalVisible} animationType="fade" transparent>
+        <View style={styles.viewerOverlay}>
+          <SafeAreaView style={styles.viewerContainer}>
+            <View style={styles.viewerHeader}>
+              <TouchableOpacity onPress={() => setViewModalVisible(false)}><Ionicons name="close" size={28} color="#FFF" /></TouchableOpacity>
+              <Text style={styles.viewerTitle} numberOfLines={1}>{selectedReport?.title}</Text>
+              <TouchableOpacity onPress={() => handleDelete(selectedReport?.report_id)}><Ionicons name="trash" size={24} color="#EF4444" /></TouchableOpacity>
             </View>
 
-            <View style={styles.imageBox}>
+            <View style={styles.viewerBody}>
               {loadingDetail ? (
-                <View style={styles.viewerLoading}>
-                  <ActivityIndicator size="large" color="#fff" />
-                  <Text style={styles.viewerLoadingText}>Decoding Secure Asset...</Text>
-                </View>
+                <ActivityIndicator size="large" color="#FFF" />
               ) : selectedReport?.report_image ? (
-                <ScrollView
-                  style={{ flex: 1 }}
-                  maximumZoomScale={4}
-                  minimumZoomScale={1}
-                  showsHorizontalScrollIndicator={false}
-                  showsVerticalScrollIndicator={false}
-                  contentContainerStyle={{ flexGrow: 1, justifyContent: 'center', alignItems: 'center' }}
-                  centerContent
-                >
-                  {loadingImage && (
-                    <View style={StyleSheet.absoluteFill}>
-                      <ActivityIndicator size="large" color="#667eea" style={{ flex: 1 }} />
-                    </View>
-                  )}
-                  <Image
-                    source={{
-                      uri: selectedReport.report_image
-                    }}
-                    style={{
-                      width: width,
-                      height: height * 0.7,
-                    }}
-                    resizeMode="contain"
-                    onLoadStart={() => setLoadingImage(true)}
-                    onLoadEnd={() => setLoadingImage(false)}
-                  />
-                </ScrollView>
+                <Image
+                  source={{ uri: selectedReport.report_image }}
+                  style={{ width: width, height: height * 0.7 }}
+                  resizeMode="contain"
+                />
               ) : (
-                <View style={styles.pdfPlaceholder}>
-                  <Ionicons name="document-text" size={120} color="#fff" />
-                  <Text style={styles.pdfText}>PDF Document</Text>
-                  <Text style={styles.pdfSub}>Secured by Sanrakshya</Text>
+                <View style={{ alignItems: 'center' }}>
+                  <MaterialCommunityIcons name="file-check" size={80} color="#FFF" />
+                  <Text style={{ color: '#FFF', marginTop: 20 }}>Document Ready</Text>
                 </View>
               )}
-            </View>
-
-            <View style={styles.viewFooter}>
-              <Text style={styles.descLabel}>Notes</Text>
-              <Text style={styles.descText}>{selectedReport?.description || 'No additional notes provided.'}</Text>
             </View>
           </SafeAreaView>
         </View>
       </Modal>
 
-      {/* Child Selector Modal */}
+      {/* Child Modal - Reusing */}
       <Modal
-        visible={showChildSelector}
-        transparent
-        animationType="none"
-        onRequestClose={closeChildModal}
+        visible={showChildSelector} transparent animationType="none" onRequestClose={closeChildModal}
       >
         <View style={styles.modalOverlay}>
-          {showChildOverlay && (
-            <TouchableOpacity
-              style={StyleSheet.absoluteFill}
-              activeOpacity={1}
-              onPress={closeChildModal}
-            />
-          )}
+          {showChildOverlay && <TouchableOpacity style={StyleSheet.absoluteFill} activeOpacity={1} onPress={closeChildModal} />}
           <TouchableWithoutFeedback>
-            <Animated.View
-              style={[
-                styles.childSelectorModal,
-                {
-                  transform: [
-                    {
-                      translateY: sheetAnim.interpolate({
-                        inputRange: [0, 1],
-                        outputRange: [300, 0],
-                      }),
-                    },
-                  ],
-                },
-              ]}
-            >
+            <Animated.View style={[styles.childSelectorModal, { transform: [{ translateY: sheetAnim.interpolate({ inputRange: [0, 1], outputRange: [300, 0] }) }] }]}>
               <View style={styles.modalHeaderRow}>
-                <Text style={styles.modalTitle}>Switch Child</Text>
-                <TouchableOpacity onPress={closeChildModal}>
-                  <Ionicons name="close" size={22} color="#2c3e50" />
-                </TouchableOpacity>
+                <Text style={styles.levelTitleModal}>Select Vault Owner</Text>
+                <TouchableOpacity onPress={closeChildModal}><Ionicons name="close" size={24} color="#1E293B" /></TouchableOpacity>
               </View>
-              <ScrollView showsVerticalScrollIndicator={false}>
+              <ScrollView>
                 {children.map((child, idx) => (
-                  <TouchableOpacity
-                    key={child.id}
-                    style={styles.childRow}
-                    onPress={async () => {
-                      await selectChild(child.id);
-                      closeChildModal();
-                    }}
-                  >
-                    {child.avatar ? (
-                      <Image source={{ uri: child.avatar }} style={styles.childRowAvatar} />
-                    ) : (
-                      <View style={styles.childRowAvatarPlaceholder}>
-                        <Ionicons name="person" size={16} color="#667eea" />
-                      </View>
-                    )}
-                    <View style={styles.childRowInfo}>
-                      <Text style={styles.childRowName}>{child.name}</Text>
-                      <Text style={styles.childRowAge}>{getAgeTextForChild(child)}</Text>
-                    </View>
-                    {idx === currentChildIndex && (
-                      <Ionicons name="checkmark-circle" size={22} color="#667eea" />
-                    )}
+                  <TouchableOpacity key={child.id} style={styles.childRow} onPress={async () => { setCurrentChildIndex(idx); await storage.saveSelectedChildId(child.id); closeChildModal(); }}>
+                    {child.avatar ? <Image source={{ uri: child.avatar }} style={styles.miniAvatar} /> : <View style={styles.miniAvatarPlaceholder}><Text>{child.name.charAt(0)}</Text></View>}
+                    <Text style={styles.childRowName}>{child.name}</Text>
+                    {idx === currentChildIndex && <Ionicons name="key" size={20} color="#6366F1" />}
                   </TouchableOpacity>
                 ))}
               </ScrollView>
@@ -697,558 +510,84 @@ const AddHealthRecordScreen = ({ navigation }) => {
 };
 
 const styles = StyleSheet.create({
-  container: {
-    flex: 1,
-    backgroundColor: '#f8f9ff',
-  },
-  header: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-    paddingHorizontal: 24,
-    paddingTop: 20,
-    paddingBottom: 20,
-    backgroundColor: '#fff',
-    borderBottomWidth: 1,
-    borderBottomColor: '#f1f3f4',
-  },
-  backButton: {
-    width: 44,
-    height: 44,
-    borderRadius: 22,
-    backgroundColor: '#f8f9ff',
-    justifyContent: 'center',
-    alignItems: 'center',
-  },
-  headerTitle: {
-    fontSize: 20,
-    fontWeight: '700',
-    color: '#2c3e50',
-  },
-  sectionWrapper: {
-    paddingHorizontal: 20,
-    marginTop: 24,
-  },
-  titleRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    marginBottom: 16,
-  },
-  sectionTitle: {
-    fontSize: 18,
-    fontWeight: '700',
-    color: '#2c3e50',
-  },
-  countBadge: {
-    marginLeft: 10,
-    backgroundColor: '#667eea',
-    color: '#fff',
-    fontSize: 12,
-    fontWeight: '700',
-    paddingHorizontal: 8,
-    paddingVertical: 2,
-    borderRadius: 10,
-    overflow: 'hidden',
-  },
-  childSelectorCard: {
-    backgroundColor: '#fff',
-    borderRadius: 16,
-    padding: 16,
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-    borderWidth: 1,
-    borderColor: '#f1f3f4',
-  },
-  childInfoRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-  },
-  childAvatarCircle: {
-    width: 40,
-    height: 40,
-    borderRadius: 20,
-    backgroundColor: '#667eea',
-    justifyContent: 'center',
-    alignItems: 'center',
-    marginRight: 12,
-  },
-  childAvatarInitial: {
-    color: '#fff',
-    fontSize: 18,
-    fontWeight: '700',
-  },
-  childAvatarImg: {
-    width: 40,
-    height: 40,
-    borderRadius: 20,
-    marginRight: 12,
-  },
-  childPrimaryName: {
-    fontSize: 16,
-    fontWeight: '600',
-    color: '#2c3e50',
-  },
-  childAgeText: {
-    fontSize: 14,
-    color: '#7f8c8d',
-  },
-  childLoadingBox: {
-    backgroundColor: '#fff',
-    borderRadius: 16,
-    paddingVertical: 16,
-    alignItems: 'center',
-    justifyContent: 'center',
-    borderWidth: 1,
-    borderColor: '#f1f3f4',
-  },
-  childLoadingText: {
-    marginTop: 8,
-    color: '#7f8c8d',
-    fontSize: 13,
-  },
-  loadingReportsBox: {
-    alignItems: 'center',
-    justifyContent: 'center',
-    paddingVertical: 80,
-  },
-  loadingReportsText: {
-    marginTop: 15,
-    color: '#7f8c8d',
-    fontSize: 15,
-    fontWeight: '500',
-  },
-  errorText: {
-    marginTop: 8,
-    fontSize: 12,
-    color: '#d93025',
-  },
-  listContainer: {
-    marginTop: 5,
-  },
-  reportCard: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    backgroundColor: '#fff',
-    padding: 16,
-    borderRadius: 16,
-    marginBottom: 12,
-    borderWidth: 1,
-    borderColor: '#f1f3f4',
-  },
-  iconCircle: {
-    width: 40,
-    height: 40,
-    borderRadius: 20,
-    alignItems: 'center',
-    justifyContent: 'center',
-    marginRight: 12,
-  },
-  reportInfo: {
-    flex: 1,
-  },
-  reportTitle: {
-    fontSize: 16,
-    fontWeight: '600',
-    color: '#2c3e50',
-  },
-  reportMeta: {
-    fontSize: 13,
-    color: '#7f8c8d',
-    marginTop: 2,
-  },
-  themeBannerContainer: {
-    backgroundColor: '#fff',
-    borderRadius: 24,
-    overflow: 'hidden',
-    borderWidth: 1,
-    borderColor: '#f1f3f4',
-    elevation: 2,
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: 4 },
-    shadowOpacity: 0.05,
-    shadowRadius: 10,
-    marginTop: 10,
-  },
-  themeBannerGrad: {
-    padding: 40,
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  bannerIconOuter: {
-    width: 100,
-    height: 100,
-    justifyContent: 'center',
-    alignItems: 'center',
-    marginBottom: 24,
-  },
-  bannerIconInner: {
-    width: 80,
-    height: 80,
-    borderRadius: 40,
-    justifyContent: 'center',
-    alignItems: 'center',
-    zIndex: 1,
-    elevation: 5,
-    shadowColor: '#667eea',
-    shadowOffset: { width: 0, height: 4 },
-    shadowOpacity: 0.3,
-    shadowRadius: 8,
-  },
-  bannerCircle1: {
-    position: 'absolute',
-    width: 100,
-    height: 100,
-    borderRadius: 50,
-    backgroundColor: '#eef2ff',
-    opacity: 0.5,
-  },
-  bannerCircle2: {
-    position: 'absolute',
-    width: 120,
-    height: 120,
-    borderRadius: 60,
-    backgroundColor: '#f8faff',
-    opacity: 0.3,
-  },
-  themeBannerTitle: {
-    fontSize: 22,
-    fontWeight: '800',
-    color: '#2c3e50',
-    marginBottom: 12,
-    textAlign: 'center',
-    letterSpacing: -0.5,
-  },
-  themeBannerSubtitle: {
-    fontSize: 14,
-    color: '#7f8c8d',
-    lineHeight: 22,
-    textAlign: 'center',
-    marginBottom: 30,
-    paddingHorizontal: 20,
-  },
-  themeBannerBtn: {
-    borderRadius: 16,
-    overflow: 'hidden',
-    elevation: 3,
-    shadowColor: '#667eea',
-    shadowOffset: { width: 0, height: 4 },
-    shadowOpacity: 0.2,
-    shadowRadius: 5,
-  },
-  themeBannerBtnGrad: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    paddingHorizontal: 24,
-    paddingVertical: 14,
-  },
-  themeBannerBtnText: {
-    color: '#fff',
-    fontSize: 15,
-    fontWeight: '700',
-  },
-  fab: {
-    position: 'absolute',
-    bottom: 30,
-    right: 30,
-    borderRadius: 30,
-    elevation: 5,
-    shadowColor: '#667eea',
-    shadowOffset: { width: 0, height: 4 },
-    shadowOpacity: 0.3,
-    shadowRadius: 5,
-  },
-  fabGradient: {
-    width: 60,
-    height: 60,
-    borderRadius: 30,
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  modalContainer: {
-    flex: 1,
-    backgroundColor: '#fff',
-  },
-  modalHeader: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-    paddingHorizontal: 20,
-    paddingVertical: 15,
-    borderBottomWidth: 1,
-    borderBottomColor: '#f1f3f4',
-  },
-  modalTitle: {
-    fontSize: 18,
-    fontWeight: '700',
-    color: '#2c3e50',
-  },
-  modalScroll: {
-    padding: 24,
-  },
-  label: {
-    fontSize: 14,
-    fontWeight: '700',
-    color: '#34495e',
-    marginBottom: 16,
-    marginTop: 10,
-  },
-  typeGrid: {
-    flexDirection: 'row',
-    flexWrap: 'wrap',
-    justifyContent: 'space-between',
-    marginBottom: 20,
-  },
-  gridItem: {
-    width: (width - 68) / 3,
-    backgroundColor: '#f8f9ff',
-    borderRadius: 16,
-    padding: 12,
-    alignItems: 'center',
-    marginBottom: 10,
-    borderWidth: 1,
-    borderColor: '#eef2ff',
-  },
-  activeGridItem: {
-    borderColor: '#667eea',
-    backgroundColor: '#fff',
-    elevation: 2,
-    shadowColor: '#667eea',
-    shadowOffset: { width: 0, height: 2 },
-    shadowOpacity: 0.1,
-    shadowRadius: 4,
-  },
-  gridIconBox: {
-    width: 44,
-    height: 44,
-    borderRadius: 12,
-    alignItems: 'center',
-    justifyContent: 'center',
-    marginBottom: 8,
-  },
-  gridLabel: {
-    fontSize: 10,
-    fontWeight: '600',
-    color: '#7f8c8d',
-    textAlign: 'center',
-  },
-  activeGridLabel: {
-    color: '#667eea',
-  },
-  formSection: {
-    marginTop: 10,
-  },
-  input: {
-    backgroundColor: '#f8f9ff',
-    borderRadius: 12,
-    padding: 14,
-    fontSize: 15,
-    color: '#2c3e50',
-    borderWidth: 1,
-    borderColor: '#f1f3f4',
-    marginBottom: 14,
-  },
-  textArea: {
-    minHeight: 80,
-    textAlignVertical: 'top',
-  },
-  perfectFilePicker: {
-    backgroundColor: '#f8f9ff',
-    borderColor: '#dcdde1',
-    borderWidth: 1,
-    borderStyle: 'dashed',
-    borderRadius: 16,
-    padding: 20,
-    marginTop: 5,
-  },
-  filePickedBorder: {
-    borderColor: '#2ecc71',
-    backgroundColor: 'rgba(46, 204, 113, 0.05)',
-    borderStyle: 'solid',
-  },
-  pickerInner: {
-    flexDirection: 'row',
-    alignItems: 'center',
-  },
-  pickerTextContent: {
-    marginLeft: 15,
-    flex: 1,
-  },
-  filePickerMainText: {
-    fontSize: 14,
-    fontWeight: '600',
-    color: '#2c3e50',
-    marginBottom: 2,
-  },
-  filePickerSubText: {
-    fontSize: 11,
-    color: '#95a5a6',
-  },
-  perfectUploadButton: {
-    marginTop: 30,
-    borderRadius: 16,
-    overflow: 'hidden',
-  },
-  perfectUploadGradient: {
-    paddingVertical: 18,
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  perfectUploadText: {
-    color: '#fff',
-    fontSize: 16,
-    fontWeight: '800',
-    letterSpacing: 0.5,
-  },
-  btnLoadingRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-  },
-  disabledBtn: {
-    opacity: 0.7,
-  },
-  blurOverlay: {
-    flex: 1,
-    backgroundColor: 'rgba(0,0,0,0.95)',
-  },
-  viewContent: {
-    flex: 1,
-  },
-  viewHeader: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    padding: 20,
-  },
-  viewHeaderText: {
-    flex: 1,
-    marginHorizontal: 16,
-  },
-  viewTitle: {
-    color: '#fff',
-    fontSize: 18,
-    fontWeight: '700',
-  },
-  viewMetaText: {
-    color: '#bdc3c7',
-    fontSize: 13,
-    marginTop: 2,
-  },
-  viewClose: {
-    padding: 4,
-  },
-  viewDelete: {
-    padding: 4,
-  },
-  viewerLoading: {
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  viewerLoadingText: {
-    color: '#fff',
-    marginTop: 15,
-    fontSize: 14,
-    fontWeight: '600',
-  },
-  imageBox: {
-    flex: 1,
-    justifyContent: 'center',
-  },
-  fullImage: {
-    width: '100%',
-    height: '100%',
-  },
-  pdfPlaceholder: {
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  pdfText: {
-    color: '#fff',
-    fontSize: 22,
-    fontWeight: '800',
-    marginTop: 20,
-  },
-  pdfSub: {
-    color: '#95a5a6',
-    fontSize: 14,
-    marginTop: 5,
-  },
-  viewFooter: {
-    padding: 24,
-    backgroundColor: 'rgba(0,0,0,0.8)',
-  },
-  descLabel: {
-    color: '#667eea',
-    fontSize: 12,
-    fontWeight: '900',
-    textTransform: 'uppercase',
-    letterSpacing: 1.5,
-    marginBottom: 8,
-  },
-  descText: {
-    color: '#fff',
-    fontSize: 15,
-    lineHeight: 24,
-  },
-  modalOverlay: {
-    flex: 1,
-    backgroundColor: 'rgba(0,0,0,0.35)',
-    justifyContent: 'flex-end',
-  },
-  childSelectorModal: {
-    backgroundColor: '#fff',
-    borderTopLeftRadius: 20,
-    borderTopRightRadius: 20,
-    paddingHorizontal: 20,
-    paddingTop: 16,
-    paddingBottom: 24,
-    maxHeight: '70%',
-  },
-  modalHeaderRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-    marginBottom: 12,
-  },
-  modalTitle: {
-    fontSize: 18,
-    fontWeight: '700',
-    color: '#2c3e50',
-  },
-  childRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    paddingVertical: 10,
-  },
-  childRowAvatar: {
-    width: 36,
-    height: 36,
-    borderRadius: 18,
-    marginRight: 10,
-  },
-  childRowAvatarPlaceholder: {
-    width: 36,
-    height: 36,
-    borderRadius: 18,
-    marginRight: 10,
-    backgroundColor: '#e0e7ff',
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  childRowInfo: {
-    flex: 1,
-  },
-  childRowName: {
-    fontSize: 15,
-    fontWeight: '600',
-    color: '#2c3e50',
-  },
-  childRowAge: {
-    fontSize: 13,
-    color: '#7f8c8d',
-  },
-  modalCloseSmall: {
-    padding: 5,
-  }
+  container: { flex: 1, backgroundColor: '#F8FAFC' },
+
+  // Top Bar
+  topFilterBar: { flexDirection: 'row', justifyContent: 'space-between', paddingHorizontal: 16, paddingVertical: 12, alignItems: 'center', backgroundColor: '#FFF', borderBottomWidth: 1, borderBottomColor: '#F1F5F9' },
+  childPill: { flexDirection: 'row', alignItems: 'center', backgroundColor: '#F1F5F9', paddingHorizontal: 10, paddingVertical: 6, borderRadius: 20 },
+  miniAvatar: { width: 24, height: 24, borderRadius: 12, marginRight: 8 },
+  miniAvatarPlaceholder: { width: 24, height: 24, borderRadius: 12, backgroundColor: '#E2E8F0', justifyContent: 'center', alignItems: 'center', marginRight: 8 },
+  miniAvatarText: { fontSize: 10, fontWeight: 'bold' },
+  childPillName: { fontSize: 14, fontWeight: '600', color: '#1E293B', marginRight: 6 },
+
+  safeBadge: { flexDirection: 'row', alignItems: 'center', backgroundColor: '#ECFDF5', paddingHorizontal: 8, paddingVertical: 4, borderRadius: 12 },
+  safeText: { marginLeft: 4, fontSize: 10, color: '#10B981', fontWeight: '700' },
+
+  // List
+  listContainer: { padding: 16 },
+  recordCard: { flexDirection: 'row', alignItems: 'center', backgroundColor: '#FFF', padding: 16, borderRadius: 16, marginBottom: 12, shadowColor: '#000', shadowOpacity: 0.03, shadowRadius: 8, elevation: 1 },
+  iconContainer: { marginRight: 16 },
+  iconGradient: { width: 44, height: 44, borderRadius: 12, justifyContent: 'center', alignItems: 'center' },
+  recordMeta: { flex: 1 },
+  recordTitle: { fontSize: 16, fontWeight: '600', color: '#1E293B', marginBottom: 2 },
+  recordDate: { fontSize: 12, color: '#64748B' },
+
+  // Empty State
+  emptyState: { alignItems: 'center', justifyContent: 'center', marginTop: 80, padding: 20 },
+  lockCircle: { width: 100, height: 100, borderRadius: 50, backgroundColor: '#F1F5F9', alignItems: 'center', justifyContent: 'center', marginBottom: 20 },
+  emptyTitle: { fontSize: 18, fontWeight: '700', color: '#1E293B' },
+  emptySub: { fontSize: 14, color: '#64748B', textAlign: 'center', marginTop: 8, maxWidth: 250 },
+  emptyBtn: { marginTop: 24, backgroundColor: '#4F46E5', paddingHorizontal: 20, paddingVertical: 12, borderRadius: 12 },
+  emptyBtnText: { color: '#FFF', fontWeight: 'bold' },
+
+  // FAB
+  fab: { position: 'absolute', bottom: 30, right: 20 },
+  fabGradient: { width: 60, height: 60, borderRadius: 30, alignItems: 'center', justifyContent: 'center', shadowColor: '#4F46E5', shadowOpacity: 0.3, shadowRadius: 10, elevation: 5 },
+
+  // Upload Modal
+  modalOverlay: { flex: 1, backgroundColor: 'rgba(15,23,42,0.6)', justifyContent: 'flex-end' },
+  uploadSheet: { backgroundColor: '#FFF', borderTopLeftRadius: 24, borderTopRightRadius: 24, padding: 20 },
+  sheetHeader: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 20 },
+  sheetTitle: { fontSize: 20, fontWeight: '700', color: '#1E293B' },
+  label: { fontSize: 14, fontWeight: '600', color: '#64748B', marginBottom: 10, marginTop: 10 },
+
+  typeGrid: { flexDirection: 'row', flexWrap: 'wrap', gap: 10 },
+  typeCard: { width: '30%', height: 90, borderWidth: 1, borderColor: '#E2E8F0', borderRadius: 12, alignItems: 'center', justifyContent: 'center', marginBottom: 8 },
+  typeCardActive: { borderColor: '#4F46E5', backgroundColor: '#EEF2FF' },
+  typeLabel: { marginTop: 8, fontSize: 11, color: '#64748B', textAlign: 'center' },
+
+  input: { backgroundColor: '#F8FAFC', padding: 16, borderRadius: 12, fontSize: 16, color: '#1E293B' },
+
+  filePicker: { borderStyle: 'dashed', borderWidth: 2, borderColor: '#E2E8F0', borderRadius: 12, padding: 20, alignItems: 'center', backgroundColor: '#F8FAFC' },
+  filePreview: { flexDirection: 'row', alignItems: 'center', width: '100%' },
+  fileName: { fontSize: 14, fontWeight: '600', color: '#1E293B' },
+  fileSize: { fontSize: 12, color: '#10B981' },
+  filePlaceholder: { alignItems: 'center' },
+  filePlaceText: { marginTop: 8, color: '#64748B', fontSize: 14 },
+
+  uploadBtn: { marginTop: 30, backgroundColor: '#4F46E5', padding: 18, borderRadius: 16, alignItems: 'center' },
+  uploadBtnDisabled: { opacity: 0.7 },
+  uploadBtnText: { color: '#FFF', fontWeight: '700', fontSize: 16 },
+
+  // Viewer
+  viewerOverlay: { flex: 1, backgroundColor: '#000' },
+  viewerContainer: { flex: 1 },
+  viewerHeader: { flexDirection: 'row', justifyContent: 'space-between', padding: 16, alignItems: 'center' },
+  viewerTitle: { color: '#FFF', fontSize: 18, fontWeight: '600', flex: 1, marginHorizontal: 16 },
+  viewerBody: { flex: 1, justifyContent: 'center' },
+
+  // Child Modal
+  childSelectorModal: { backgroundColor: '#fff', borderTopLeftRadius: 24, borderTopRightRadius: 24, padding: 20 },
+  modalHeaderRow: { flexDirection: 'row', justifyContent: 'space-between', marginBottom: 20 },
+  levelTitleModal: { fontSize: 18, fontWeight: '700' },
+  childRow: { flexDirection: 'row', alignItems: 'center', paddingVertical: 12, borderBottomWidth: 1, borderBottomColor: '#F1F5F9' },
+  childRowName: { marginLeft: 10, fontSize: 16, flex: 1 },
+
+  // Source Picker
+  sourcePickerSheet: { backgroundColor: '#FFF', borderTopLeftRadius: 24, borderTopRightRadius: 24, padding: 20, paddingBottom: 40 },
+  sourceOption: { alignItems: 'center', width: 80 },
+  sourceIconWrap: { width: 60, height: 60, borderRadius: 30, alignItems: 'center', justifyContent: 'center', marginBottom: 8 },
+  sourceLabel: { fontSize: 14, fontWeight: '600', color: '#1E293B' }
 });
 
 export default AddHealthRecordScreen;
